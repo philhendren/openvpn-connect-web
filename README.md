@@ -33,7 +33,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-What I would say in its defence: the tests are real (500+, and they never touch the real system —
+What I would say in its defence: the tests are real (581, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout), the privilege boundary is
 narrow and deliberate (one root helper, a fixed set of verbs, no caller-supplied paths or content
 crossing into root), and several of the bugs found along the way were the kind that hide from
@@ -72,27 +72,87 @@ code. Nothing is passed on the openvpn command line to force one or the other.
 
 ## Requirements
 
-- **Linux with systemd** — the service is a systemd unit and the root helper uses `systemctl`.
-- **OpenVPN 2.5+** — `openvpn` on `PATH`, or set `OPENVPN=/path/to/openvpn` when installing.
-- **`sudo`** — for the install, and for the one root operation at runtime.
+- **Linux with systemd.** The app installs a systemd unit, and the root helper and the DNS report
+  both call `systemctl` / `resolvectl`.
+- **OpenVPN 2.5+** — `openvpn` on `PATH`, or `OPENVPN=/path/to/openvpn` when installing. 2.6+ is
+  what the [DNS](#dns) section describes, because that is where the client started configuring
+  systemd-resolved itself.
+- **`sudo`**, for the install and for the one root operation at runtime.
+- **`iproute2`** (`ip`) — the Routes and Tunnel scope panels read the kernel's tables with it.
+- **`whois`** — optional. Without it the routes table still lists every route, just with no owner
+  names beside the public ones.
+- **dnsmasq** — optional, and only the DNS rules panel uses it. Without it everything else works
+  and applying a rule reports that dnsmasq is not running rather than failing.
 - **[uv](https://docs.astral.sh/uv/)** — Python is managed entirely by uv; there is no
-  `requirements.txt` and no virtualenv to make by hand. Install it as **the user who will run the
-  app**, not as root:
+  `requirements.txt` and no virtualenv to make by hand.
 
-  ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  # then restart your shell, or: source $HOME/.local/bin/env
-  uv --version
-  ```
+### Installing them
 
-  `install.sh` looks up uv as that user and refuses to continue without it. If you installed it
-  somewhere unusual, pass the path: `sudo UV=/opt/uv/bin/uv ./deploy/install.sh`.
-- **dnsmasq** — optional, only for the DNS panel. Without it everything else works and applying a
-  DNS rule reports that dnsmasq is not running.
+There is a script that does all of this for the distribution you are on:
+
+```bash
+./install_prerequisites.sh            # asks before installing dnsmasq
+./install_prerequisites.sh --check    # report what is missing, install nothing
+./install_prerequisites.sh -y --with-dnsmasq
+```
+
+Run it **as yourself, not with sudo** — it elevates the package installs individually, and uv has
+to belong to the account the service will run as. It handles Debian/Ubuntu, the Fedora/RHEL family
+and Arch, checks each optional package against the repositories before asking for it (Ubuntu and
+Fedora split `systemd-resolved` out of systemd; Arch does not), and finishes by reporting what the
+machine can actually do rather than trusting the package manager's exit status.
+
+To do it by hand instead:
+
+**Ubuntu / Debian**
+
+```bash
+sudo apt update
+sudo apt install openvpn iproute2 whois curl ca-certificates
+sudo apt install systemd-resolved      # separate package on Ubuntu 24.04+; already there on older
+sudo apt install dnsmasq               # optional, only for the DNS rules panel
+```
+
+**Fedora / RHEL family**
+
+```bash
+sudo dnf install openvpn iproute whois curl ca-certificates
+sudo dnf install systemd-resolved      # separate package on recent Fedora
+sudo dnf install dnsmasq               # optional
+```
+
+**Arch**
+
+```bash
+sudo pacman -S --needed openvpn iproute2 whois curl ca-certificates
+sudo pacman -S dnsmasq                 # optional
+# systemd-resolved is part of the systemd package here
+```
+
+**uv, on any of them** — install it as **the user who will run the app**, never as root:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# then restart your shell, or: source $HOME/.local/bin/env
+uv --version
+```
+
+`install.sh` looks up uv as that user and refuses to continue without it. If you installed it
+somewhere unusual, pass the path: `sudo UV=/opt/uv/bin/uv ./deploy/install.sh`.
+
+### If you install dnsmasq
+
+On a machine already running systemd-resolved, both want port 53. The arrangement this expects is
+dnsmasq on `127.0.0.1` with resolved forwarding to it — typically `listen-address=127.0.0.1` plus
+`bind-interfaces` for dnsmasq, and `DNS=127.0.0.1` for resolved. If dnsmasq will not start after
+installing, that conflict is almost always why. The app never edits `/etc/dnsmasq.conf` or
+resolved's configuration; it owns exactly one file, `/etc/dnsmasq.d/vpn-connect.conf`.
 
 ## Install
 
 ```bash
+./install_prerequisites.sh     # openvpn, iproute2, whois, uv — see Requirements above
+
 mkdir -p ~/.vpn                # must exist before installing; see below
 uv sync
 
@@ -329,7 +389,7 @@ is writable.
 
 Above the rules, the panel says which resolver answers a lookup right now. This is not cosmetic:
 **OpenVPN 2.6+ applies pushed `dhcp-option DNS` itself, over D-Bus to systemd-resolved**, with no
-`--up` script involved — so a client that runs no external scripts at all (see Notifications) can
+`--up` script involved — so a client that runs no external scripts at all (this one does not) can
 still have DNS taken away from it entirely. When the server pushes a catch-all, resolved gets a
 `~.` route-only domain on `tun0` and *every* lookup goes over the tunnel, dnsmasq included. The
 same rules that are load-bearing on an older client are then dead weight, and nothing about a rule
@@ -386,12 +446,13 @@ you asked for and a connection that was cut are not the same news:
 | You pressed Disconnect | `VPN disconnected` | default |
 | It dropped on its own | `VPN dropped` | **high** |
 
-Telling the last two apart is only possible inside the app. OpenVPN's own `--down` script fires
-identically whether the client was asked to stop or the server cut it off, so the earlier
-hook-based version needed a marker file on disk to carry that fact across. The controller knows
-directly — `disconnect()` sets a flag — so sending moved into `app/services/notifications.py` and
-the marker went away. As a consequence **OpenVPN runs no external script at all**: the helper no
-longer passes `--script-security`, `--up` or `--down`.
+Telling the last two apart is only possible inside the app. OpenVPN's own `--down` fires
+identically whether the client was asked to stop or the server cut it off, so nothing outside the
+process can distinguish them; the controller can, because `disconnect()` sets a flag in memory
+before it signals the tunnel. Sending lives in `app/services/notifications.py` over stdlib
+`urllib`, and **OpenVPN runs no external script at all** — the helper passes no
+`--script-security`, `--up` or `--down`, so there is nothing on disk for a notification to go
+wrong in.
 
 Notifications never affect the tunnel. Each one is sent fire-and-forget on its own thread with a
 short timeout, and failures are logged rather than raised — losing a push is an annoyance, failing
@@ -410,8 +471,8 @@ brace.
 ## Look and feel
 
 Bootstrap 5.3 and the OpenVPN mark are **vendored** into `app/static/vendor/` and
-`app/static/img/` — nothing is fetched from a CDN at runtime, which is what lets the CSP stay
-`'self'`. The palette is OpenVPN orange on warm graphite neutrals, defined as CSS custom properties
+`app/static/img/` — no CDN serves this page any script or stylesheet, which is what lets the CSP
+keep `default-src 'self'` with Google Fonts as its only exception. The palette is OpenVPN orange on warm graphite neutrals, defined as CSS custom properties
 in `app/static/css/app.css`; tunnel status has its own green/blue/red/amber scale so "in progress"
 never blends into the brand colour. Light and dark are driven by `[data-bs-theme]`, which
 `static/js/theme.js` sets before first paint from `localStorage` or the OS preference, and the
@@ -423,6 +484,29 @@ A tunnel started outside the app — by hand, or by a shell script with a TCP ma
 `127.0.0.1:7505` rather than the unix socket this uses — shows up in the UI as `unmanaged`. The app
 can see the pid and the tun address, and can stop it, but cannot read its state or its log. Stop it
 and reconnect from the UI to get full control. Use one or the other for a given session.
+
+## Is what is running what you edited?
+
+A banner at the top of the page appears when the deployment has drifted from the checkout it runs
+from, because that question has a habit of being answered wrongly:
+
+- **The helper.** `install.sh` renders `deploy/vpn-connect-helper.in` into `/usr/local/sbin` and
+  stamps it with the template's sha256. Editing the template changes nothing until you re-run the
+  installer, and the failure that follows is a puzzle — an unknown verb, a flag no longer passed —
+  rather than a message.
+- **The Python.** Jinja templates reload on edit; the modules behind them do not. A page can show
+  new markup driven by code that never reloaded. Any `.py` edited after the process started is
+  reported; templates are deliberately not.
+- **The database.** Schema version behind the migrations on disk. Migrations run at start-up, so a
+  restart is the whole fix.
+- **`webapp.env`.** Repeated keys and lines that are not settings at all. The documented way to set
+  a password *appends a command's output* to that file, and systemd takes the last value of a
+  repeated key and skips anything it cannot parse — both silently, so a damaged file behaves almost
+  correctly.
+
+It is advice and nothing more: every fix it names (`sudo ./deploy/install.sh`,
+`sudo systemctl restart vpn-connect`, editing the env file) needs a privilege the app deliberately
+does not have.
 
 ## Development
 
