@@ -75,12 +75,28 @@ jobs:
             uv run --frozen coverage report --format=markdown
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
+      # shields.io's "endpoint" schema rather than a raw number, so the colour is decided here
+      # (where the thresholds can be read) instead of being hardcoded into the README, where a
+      # badge would go on claiming green all the way down.
+      - name: Badge data
+        if: matrix.python-version == '3.13'
+        run: |
+          total="$(uv run --frozen coverage report --format=total --precision=1)"
+          colour="$(awk -v t="$total" 'BEGIN {
+            print (t >= 90) ? "brightgreen" : (t >= 80) ? "green" : (t >= 70) ? "yellow" : "red"
+          }')"
+          printf '{"schemaVersion":1,"label":"coverage","message":"%s%%","color":"%s"}\n' \
+            "$total" "$colour" > coverage.json
+          cat coverage.json
+
       - name: Upload coverage report
         if: matrix.python-version == '3.13'
         uses: actions/upload-artifact@v7
         with:
           name: coverage
-          path: coverage.xml
+          path: |
+            coverage.xml
+            coverage.json
           retention-days: 14
 
   lint:
@@ -112,3 +128,39 @@ jobs:
           for script in install_prerequisites.sh deploy/install.sh deploy/vpn-connect-helper.in; do
             bash -n "$script" && echo "ok: $script"
           done
+
+  # The README's coverage badge reads .github/coverage.json from the default branch through
+  # shields.io, so something has to keep that file current. This is the only job that writes to
+  # the repository, and it is fenced in three ways: it runs on pushes to main and nowhere else,
+  # it is the only job granted contents: write, and it touches exactly one path. A pull request
+  # -- including one from a fork -- never reaches it.
+  badge:
+    name: coverage badge
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage
+          path: artifact
+
+      - name: Commit the badge data if it changed
+        run: |
+          mv artifact/coverage.json .github/coverage.json
+          if git diff --quiet -- .github/coverage.json; then
+            echo "Coverage is unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/coverage.json
+          # [skip ci] because this commit is a consequence of a run, not a reason for another one.
+          git commit -m "Update coverage badge data [skip ci]"
+          git push

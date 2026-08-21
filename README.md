@@ -1,6 +1,7 @@
 # OpenVPN Connect
 
 [![tests](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml/badge.svg)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
+[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fmain%2F.github%2Fcoverage.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
 
 A small Flask control panel for the OpenVPN client on **one machine**. Start and stop the tunnel,
 watch its state and traffic, see what it actually routes and resolves — from a web page you can
@@ -524,9 +525,13 @@ Tests never touch the real system: `subprocess.run` and the management client ar
 against command-injection regressions.
 
 Every push and pull request runs the suite on Python 3.12 and 3.13, plus ruff and a syntax check of
-the shell that makes up the privilege boundary. Coverage (currently ~93%, branch coverage included)
-is reported in the run summary and uploaded as an artifact; the 90% floor lives in `pyproject.toml`,
-so CI fails on the same number you do locally.
+the shell that makes up the privilege boundary. Coverage (branch coverage included) appears as a
+notice on the run, in the job log and in the run summary, and `coverage.xml` is uploaded as an
+artifact; the 90% floor lives in `pyproject.toml`, so CI fails on the same number you do locally.
+
+The badge above reads `.github/coverage.json`, which a `main`-only job rewrites after a successful
+run. That job is the only one granted `contents: write`, it touches that one path, and a pull
+request never reaches it.
 
 The suite runs with **deliberately cheap scrypt parameters** — at production cost the fixtures spend
 about a minute deriving keys nobody looks at. `SCRYPT_N_PRODUCTION` and
