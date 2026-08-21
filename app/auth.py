@@ -58,8 +58,17 @@ class LoginThrottle:
             self._failures.pop(key, None)
 
 
+#: How a login password is hashed. Werkzeug's bare "scrypt" is n=2**15, r=8, p=1.
+#:
+#: Verification cost follows whatever the stored hash was made with, so lowering this in tests
+#: (see tests/conftest.py) makes both hashing and checking cheap. ``PASSWORD_HASH_METHOD`` is what
+#: the tests patch; ``..._PRODUCTION`` is what a real install must use, and a test asserts it.
+PASSWORD_HASH_METHOD_PRODUCTION = "scrypt"  # noqa: S105 -- an algorithm name, not a password
+PASSWORD_HASH_METHOD = PASSWORD_HASH_METHOD_PRODUCTION
+
+
 def hash_password(password: str) -> str:
-    return generate_password_hash(password, method="scrypt")
+    return generate_password_hash(password, method=PASSWORD_HASH_METHOD)
 
 
 def verify_password(password: str) -> bool:
