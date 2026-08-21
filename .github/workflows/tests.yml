@@ -48,8 +48,30 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen --python ${{ matrix.python-version }}
 
+      # Coverage runs here but not in the local default (see pyproject.toml): CI has the time, and
+      # a number nobody can see is a number nobody maintains. The floor that fails the job lives
+      # in pyproject.toml, so it is the same one a developer hits locally.
       - name: Run tests
-        run: uv run --frozen pytest -q
+        run: uv run --frozen pytest -q --cov=app --cov-report=term-missing --cov-report=xml
+
+      # One version's report is enough -- the two legs cover the same lines, and two summaries on
+      # a run would just be noise.
+      - name: Coverage summary
+        if: matrix.python-version == '3.13'
+        run: |
+          {
+            echo "## Coverage"
+            echo
+            uv run --frozen coverage report --format=markdown
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 14
 
   lint:
     name: ruff

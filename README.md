@@ -1,5 +1,7 @@
 # OpenVPN Connect
 
+[![tests](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml/badge.svg)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
+
 A small Flask control panel for the OpenVPN client on **one machine**. Start and stop the tunnel,
 watch its state and traffic, see what it actually routes and resolves — from a web page you can
 open on another device. It runs as a systemd service and needs root for exactly one operation.
@@ -512,13 +514,24 @@ does not have.
 
 ```bash
 uv run flask --app app run --debug --port 5000     # localhost dev server
-uv run pytest
+uv run pytest                                      # ~9s
+uv run pytest --cov=app                            # with coverage; fails under 90%
 uv run ruff check . && uv run ruff format .
 ```
 
 Tests never touch the real system: `subprocess.run` and the management client are both injected into
 `OpenVpnController`, and the argv assertions in `tests/test_openvpn.py` are the standing defence
 against command-injection regressions.
+
+Every push and pull request runs the suite on Python 3.12 and 3.13, plus ruff and a syntax check of
+the shell that makes up the privilege boundary. Coverage (currently ~93%, branch coverage included)
+is reported in the run summary and uploaded as an artifact; the 90% floor lives in `pyproject.toml`,
+so CI fails on the same number you do locally.
+
+The suite runs with **deliberately cheap scrypt parameters** — at production cost the fixtures spend
+about a minute deriving keys nobody looks at. `SCRYPT_N_PRODUCTION` and
+`PASSWORD_HASH_METHOD_PRODUCTION` are what a real install uses, and `tests/test_vault.py` loads an
+unpatched copy of each module to assert they have not been weakened.
 
 ## Licence
 

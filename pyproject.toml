@@ -12,6 +12,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.6",
 ]
 
@@ -31,3 +32,21 @@ ignore = ["S101"]
 testpaths = ["tests"]
 pythonpath = ["."]
 filterwarnings = ["error"]
+
+# Coverage is deliberately *not* in addopts. Instrumentation costs about a third of the run time,
+# and the plain `uv run pytest` that gets typed twenty times an hour should stay as fast as it can
+# be. Ask for it when you want it -- `uv run pytest --cov=app` -- which is what CI does.
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+# A floor, not a target. It sits below where the suite actually is, so it catches a change that
+# guts the tests rather than nagging about a line or two -- and it is the number to raise
+# deliberately, never to lower quietly.
+fail_under = 90
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
