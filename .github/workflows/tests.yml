@@ -1,0 +1,75 @@
+# Runs the suite on every pull request, and on pushes to main.
+#
+# Nothing here needs openvpn, dnsmasq or systemd: the tests fake subprocess.run, the management
+# socket and every HTTP call, and assert on the argv that *would* have run. That is what makes a
+# stock ubuntu runner a fair place to run them.
+
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second push to a PR makes the first run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Both versions report, rather than the second being cancelled by the first failure --
+      # "fails only on 3.12" is the useful half of the answer.
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # --frozen throughout: uv.lock is committed, so CI must fail on a lockfile that no longer
+      # matches pyproject.toml rather than quietly resolving something newer and testing that.
+      - name: Install dependencies
+        run: uv sync --frozen --python ${{ matrix.python-version }}
+
+      - name: Run tests
+        run: uv run --frozen pytest -q
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: ruff check
+        run: uv run --frozen ruff check .
+
+      - name: ruff format
+        run: uv run --frozen ruff format --check .
+
+      # The shell is part of the privilege boundary here, so a syntax error in it matters as much
+      # as one in the Python. Only a parse check: the helper is a template full of @PLACEHOLDER@
+      # tokens and is never executed in this form.
+      - name: Shell syntax
+        run: |
+          for script in install_prerequisites.sh deploy/install.sh deploy/vpn-connect-helper.in; do
+            bash -n "$script" && echo "ok: $script"
+          done
