@@ -1,0 +1,33 @@
+[project]
+name = "vpn-connect"
+version = "0.1.0"
+description = "Local web control panel for the OpenVPN client on this machine"
+requires-python = ">=3.12"
+dependencies = [
+    "cryptography>=50.0.0",
+    "flask>=3.0",
+    "gunicorn>=23.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "S"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+# Dummy credentials in fixtures and helper defaults are the point of these files.
+"tests/*" = ["S105", "S106", "S107"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = ["error"]

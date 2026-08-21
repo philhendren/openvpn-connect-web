@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Setup required — OpenVPN Connect{% endblock %}
+{% block subtitle %}Setup required{% endblock %}
+{% block content %}
+<main class="card card-narrow mx-auto">
+  <div class="card-body p-4">
+    <h2 class="h6 text-uppercase text-body-secondary mb-3">Setup required</h2>
+    <p class="text-body-secondary small">No web UI password is configured, so nobody can sign in yet.</p>
+    <p class="small mb-2">Generate one and add it to the environment file:</p>
+    <pre class="code mb-0">uv run flask --app app set-password &gt;&gt; ~/.vpn/webapp.env
+uv run flask --app app gen-secret   &gt;&gt; ~/.vpn/webapp.env
+chmod 600 ~/.vpn/webapp.env
+sudo systemctl restart vpn-connect</pre>
+  </div>
+</main>
+{% endblock %}

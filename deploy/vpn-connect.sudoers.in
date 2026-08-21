@@ -1,0 +1,13 @@
+# Installed to /etc/sudoers.d/vpn-connect (mode 0440, root:root).
+#
+# This is the entire privileged surface of the web app. Nothing else belongs in here -- in
+# particular never allowlist /usr/sbin/openvpn directly, since arbitrary openvpn arguments
+# (--up, --plugin, --script-security) are equivalent to a root shell.
+#
+# Arguments are deliberately unrestricted here: this machine runs sudo-rs, which rejects
+# wildcards in command arguments, so the allowlist cannot be expressed in sudoers. Validation
+# happens inside the helper instead -- it accepts only start/stop/status, matches the profile
+# name against ^[A-Za-z0-9_-]{1,64}$, and requires the resulting path to already exist. The
+# helper is root-owned and mode 0755, so the app user cannot rewrite it.
+
+@VPN_OWNER@ ALL=(root) NOPASSWD: @HELPER@

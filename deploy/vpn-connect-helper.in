@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+#
+# vpn-connect-helper — the ONLY thing the web app is allowed to run as root.
+#
+# It takes a fixed set of actions and a profile name that must match a file already present in
+# the operator's VPN directory. Nothing from the request body reaches a shell: the openvpn
+# invocation below is fixed, and the profile name is validated against ^[A-Za-z0-9_-]{1,64}$
+# before it is used to build a path. The dns-apply action follows the same rule taken to its
+# conclusion: it accepts no argument at all, reading a staged file at one fixed path instead.
+#
+# Installed by deploy/install.sh — edit the template, not the installed copy.
+
+set -euo pipefail
+
+# sha256 of this template as it stood when install.sh rendered it. The app reads this line back
+# out of the installed copy and compares it against the template in the repo, so a helper left
+# behind by an older install is reported in the UI instead of being discovered as a puzzling
+# runtime failure. Nothing reads it as a setting; it exists to be compared.
+HELPER_VERSION="@HELPER_VERSION@"
+
+VPN_OWNER="@VPN_OWNER@"
+VPN_DIR="@VPN_DIR@"
+RUN_DIR="@RUN_DIR@"
+OPENVPN="@OPENVPN@"
+DNS_CONF="@DNS_CONF@"
+LEGACY_DNS_CONF="@LEGACY_DNS_CONF@"
+DNSMASQ_UNIT="@DNSMASQ_UNIT@"
+
+MGMT_SOCK="$RUN_DIR/mgmt.sock"
+PID_FILE="$VPN_DIR/openvpn.pid"
+LOG_FILE="$VPN_DIR/openvpn.log"
+DNS_STAGED="$VPN_DIR/dns-staged.conf"
+
+# Every working name lives in the config directory itself, so installing and rolling back are
+# renames rather than cross-filesystem copies -- and every one of them starts with a dot, because
+# dnsmasq's conf-dir "always skips" files whose names start with '.' but reads *everything* else
+# regardless of extension. A plain "$DNS_CONF.tmp" or a legacy file retired to "*.disabled" stays
+# in the directory and is therefore still loaded as a second, stale copy of the rules.
+DNS_DIR="$(dirname "$DNS_CONF")"
+DNS_TMP="$DNS_DIR/.$(basename "$DNS_CONF").tmp"
+DNS_PREVIOUS="$DNS_DIR/.$(basename "$DNS_CONF").previous"
+
+die() { echo "$*" >&2; exit 1; }
+
+running_pid() {
+    [[ -f "$PID_FILE" ]] || return 1
+    local pid
+    pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    echo "$pid"
+}
+
+validate_profile() {
+    local name="$1"
+    [[ "$name" =~ ^[A-Za-z0-9_-]{1,64}$ ]] || die "Invalid profile name."
+    local path="$VPN_DIR/$name.ovpn"
+    [[ -f "$path" ]] || die "No such profile: $path"
+    echo "$path"
+}
+
+cmd_start() {
+    local profile_path
+    profile_path=$(validate_profile "${1:-}")
+
+    if pid=$(running_pid); then
+        die "OpenVPN is already running (pid $pid)."
+    fi
+
+    install -d -o root -g "$VPN_OWNER" -m 0770 "$RUN_DIR"
+    rm -f "$MGMT_SOCK"
+
+    # No --static-challenge here. It used to be passed for every profile alike, from one
+    # install-wide setting, which forced OpenVPN into the two-field SCRV1 exchange whether or not
+    # the server had asked for one -- a password-only connection could not authenticate at all.
+    # The profile's own `static-challenge` line decides, which is where OpenVPN documents it and
+    # the only place the app reads it from.
+    "$OPENVPN" \
+        --config "$profile_path" \
+        --cd "$VPN_DIR" \
+        --daemon openvpn-webui \
+        --log "$LOG_FILE" \
+        --writepid "$PID_FILE" \
+        --management "$MGMT_SOCK" unix \
+        --management-client-user "$VPN_OWNER" \
+        --management-query-passwords \
+        --management-hold \
+        --management-log-cache 500 \
+        --management-up-down
+
+    echo "started"
+}
+
+cmd_stop() {
+    local pid
+    if ! pid=$(running_pid); then
+        rm -f "$MGMT_SOCK"
+        echo "not running"
+        return 0
+    fi
+    kill "$pid"
+    for _ in $(seq 1 50); do
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.2
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" || true
+    fi
+    rm -f "$MGMT_SOCK"
+    echo "stopped"
+}
+
+cmd_status() {
+    local pid
+    if pid=$(running_pid); then
+        echo "running $pid"
+    else
+        echo "stopped"
+    fi
+}
+
+# Independent of the app's own validation in app/services/dns.py -- the same "trust nothing that
+# crosses into root, re-check it here in the interpreter that will actually act on it" lesson as
+# validate_profile() above. Rejects the whole file on the first bad line rather than filtering
+# line-by-line: a partially-trusted file must never be partially applied.
+validate_dns_staging() {
+    local n=0 line
+    while IFS= read -r line; do
+        n=$((n + 1))
+        [[ $n -le 2000 ]] || die "Staged DNS file has too many lines."
+        [[ -z "$line" || "$line" == \#* ]] && continue
+        [[ "$line" =~ ^server=/[A-Za-z0-9.-]{1,253}/[0-9A-Fa-f:.]{2,45}$ ]] && continue
+        [[ "$line" =~ ^server=[0-9A-Fa-f:.]{2,45}$ ]] && continue
+        die "Staged DNS file contains an unrecognised line: ${line:0:80}"
+    done < "$DNS_STAGED"
+}
+
+cmd_dns_apply() {
+    [[ -f "$DNS_STAGED" ]] || die "No staged DNS rules to apply."
+    validate_dns_staging
+
+    install -o root -g root -m 0644 "$DNS_STAGED" "$DNS_TMP"
+
+    # Kept so a restart the new rules break can be undone. Copied rather than moved: until the
+    # rename below succeeds, the live file must stay exactly where dnsmasq expects it.
+    local had_previous=0
+    if [[ -f "$DNS_CONF" ]]; then
+        cp -a "$DNS_CONF" "$DNS_PREVIOUS"
+        had_previous=1
+    fi
+
+    mv -f "$DNS_TMP" "$DNS_CONF"
+
+    # One source of truth, in the same operation as installing the new file -- never a window
+    # where two files both define server= for the same domain. Idempotent: a repeat apply after
+    # the first cutover finds nothing left to move.
+    if [[ -n "$LEGACY_DNS_CONF" && -f "$LEGACY_DNS_CONF" ]]; then
+        mv -f "$LEGACY_DNS_CONF" \
+            "$(dirname "$LEGACY_DNS_CONF")/.$(basename "$LEGACY_DNS_CONF").disabled"
+    fi
+
+    if ! systemctl is-active --quiet "$DNSMASQ_UNIT"; then
+        # Not fatal -- the rules are correctly installed and take effect whenever dnsmasq next
+        # starts. The app reports this back as a warning rather than treating the save as failed.
+        rm -f "$DNS_PREVIOUS"
+        echo "applied: dnsmasq is not running -- rules installed but not active"
+        return 0
+    fi
+
+    # Restart, not reload. dnsmasq reads its configuration only at startup: SIGHUP -- which is
+    # exactly what this unit's ExecReload sends -- clears the cache and re-reads /etc/hosts, and
+    # the man page is explicit that it "does NOT re-read the configuration file". Reloading here
+    # installed the new rules and left the running resolver answering from the old ones, with the
+    # app reporting success: the failure mode was silence, which is the worst kind.
+    if systemctl restart "$DNSMASQ_UNIT"; then
+        rm -f "$DNS_PREVIOUS"
+        echo "applied"
+        return 0
+    fi
+
+    # The one thing a restart costs that a reload did not: a refusal leaves the box with no
+    # resolver at all, where a failed reload left the old one running. dnsmasq's unit tests the
+    # configuration before starting, so this is reachable by a line that passed validation above
+    # but that dnsmasq still dislikes. Put back what was there and bring it up again, so a bad
+    # rule costs an error message rather than DNS.
+    local outcome
+    if (( had_previous )); then
+        mv -f "$DNS_PREVIOUS" "$DNS_CONF"
+        outcome="the previous ones have been put back"
+    else
+        rm -f "$DNS_CONF"
+        outcome="none are installed"
+    fi
+    systemctl restart "$DNSMASQ_UNIT" || true
+    die "dnsmasq rejected the new rules; $outcome."
+}
+
+case "${1:-}" in
+    start)      shift; cmd_start "${1:-}" ;;
+    stop)       cmd_stop ;;
+    status)     cmd_status ;;
+    dns-apply)  cmd_dns_apply ;;
+    *)          die "Usage: vpn-connect-helper {start <profile>|stop|status|dns-apply}" ;;
+esac

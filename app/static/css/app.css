@@ -1,0 +1,326 @@
+/* Theme layer over Bootstrap 5.3.
+ *
+ * Palette: OpenVPN orange as the brand/CTA colour, on warm graphite neutrals. Orange is kept
+ * exclusively for branding and primary actions -- tunnel status uses its own green/blue/red/amber
+ * scale so "in progress" never blends into the brand.
+ *
+ * Light and dark are driven by [data-bs-theme], which static/js/theme.js sets before first paint
+ * from localStorage or the OS preference.
+ */
+
+:root,
+[data-bs-theme="light"] {
+  --brand: #d9761c;
+  --brand-strong: #b85f11;
+  --brand-contrast: #ffffff;
+  --brand-soft: rgba(217, 118, 28, .12);
+  --surface: #ffffff;
+
+  --st-ok: #15803d;          --st-ok-bg: #dcfce7;
+  --st-busy: #1d4ed8;        --st-busy-bg: #dbeafe;
+  --st-bad: #b91c1c;         --st-bad-bg: #fee2e2;
+  --st-warn: #a16207;        --st-warn-bg: #fef3c7;
+  --st-idle: #57534e;        --st-idle-bg: #ebe5dd;
+
+  --rx: #0f766e;             --rx-fill: rgba(15, 118, 110, .18);
+  --tx: #6d28d9;             --tx-fill: rgba(109, 40, 217, .18);
+
+  --bs-body-bg: #f4f1ec;
+  --bs-body-color: #221d17;
+  --bs-emphasis-color: #100d0a;
+  --bs-secondary-color: rgba(34, 29, 23, .62);
+  --bs-border-color: #e3dbd0;
+  --bs-tertiary-bg: #efe9e1;
+}
+
+[data-bs-theme="dark"] {
+  --brand: #f5943f;
+  --brand-strong: #ffab61;
+  --brand-contrast: #1a1207;
+  --brand-soft: rgba(245, 148, 63, .16);
+  --surface: #1d1a17;
+
+  --st-ok: #4ade80;          --st-ok-bg: #12331f;
+  --st-busy: #93b4fd;        --st-busy-bg: #17233d;
+  --st-bad: #f87171;         --st-bad-bg: #3a1818;
+  --st-warn: #fbbf24;        --st-warn-bg: #372a0e;
+  --st-idle: #a8a29e;        --st-idle-bg: #2a2623;
+
+  --bs-body-bg: #131110;
+  --bs-body-color: #ece6df;
+  --bs-emphasis-color: #ffffff;
+  --bs-secondary-color: rgba(236, 230, 223, .60);
+  --bs-border-color: #302a25;
+  --bs-tertiary-bg: #232020;
+}
+
+:root,
+[data-bs-theme="light"],
+[data-bs-theme="dark"] {
+  --bs-body-font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --bs-body-font-size: .9375rem;
+  --bs-card-bg: var(--surface);
+  --bs-card-border-color: var(--bs-border-color);
+  --bs-card-border-radius: .75rem;
+  --bs-modal-bg: var(--surface);
+  --bs-modal-border-color: var(--bs-border-color);
+  --bs-link-color: var(--brand);
+  --bs-link-hover-color: var(--brand-strong);
+  --bs-focus-ring-color: var(--brand-soft);
+  --bs-code-color: var(--brand-strong);
+  --bs-border-radius: .5rem;
+}
+
+body { -webkit-font-smoothing: antialiased; }
+.container { max-width: 980px; }
+
+/* --- brand --------------------------------------------------------------- */
+
+.brand-badge {
+  display: grid;
+  place-items: center;
+  width: 40px; height: 40px;
+  border-radius: 11px;
+  background: var(--brand);
+  color: var(--brand-contrast);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .18);
+  flex: none;
+}
+.brand-mark { width: 24px; height: 24px; }
+
+.btn-brand {
+  --bs-btn-bg: var(--brand);
+  --bs-btn-border-color: var(--brand);
+  --bs-btn-color: var(--brand-contrast);
+  --bs-btn-hover-bg: var(--brand-strong);
+  --bs-btn-hover-border-color: var(--brand-strong);
+  --bs-btn-hover-color: var(--brand-contrast);
+  --bs-btn-active-bg: var(--brand-strong);
+  --bs-btn-active-border-color: var(--brand-strong);
+  --bs-btn-active-color: var(--brand-contrast);
+  --bs-btn-disabled-bg: var(--brand);
+  --bs-btn-disabled-border-color: var(--brand);
+  --bs-btn-disabled-color: var(--brand-contrast);
+  font-weight: 500;
+}
+
+/* The connect button once the tunnel is up: same green tokens as the status card, so the two
+   agree at a glance. It is always disabled in this state, and Bootstrap dims a disabled button
+   by default -- which would read as failure rather than success -- so the disabled colours are
+   pinned explicitly. */
+.btn-connected {
+  --bs-btn-bg: var(--st-ok-bg);
+  --bs-btn-border-color: var(--st-ok);
+  --bs-btn-color: var(--st-ok);
+  --bs-btn-disabled-bg: var(--st-ok-bg);
+  --bs-btn-disabled-border-color: var(--st-ok);
+  --bs-btn-disabled-color: var(--st-ok);
+  --bs-btn-disabled-opacity: 1;
+  font-weight: 500;
+}
+
+/* --- theme toggle -------------------------------------------------------- */
+
+.btn-icon { display: inline-grid; place-items: center; width: 34px; height: 34px; padding: 0; }
+.icon { width: 16px; height: 16px; }
+[data-bs-theme="light"] .icon-moon,
+[data-bs-theme="dark"] .icon-sun { display: none; }
+
+/* --- cards --------------------------------------------------------------- */
+
+.card { box-shadow: 0 1px 2px rgba(16, 12, 8, .05); }
+[data-bs-theme="dark"] .card { box-shadow: none; }
+.card-title-sm {
+  font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--bs-secondary-color); margin-bottom: 1rem;
+}
+.card-narrow { max-width: 400px; margin-top: 3rem; }
+
+/* --- status -------------------------------------------------------------- */
+
+.state-dot {
+  width: 12px; height: 12px; border-radius: 50%; flex: none;
+  background: var(--state-fg, var(--st-idle));
+  box-shadow: 0 0 0 4px var(--state-bg, var(--st-idle-bg));
+}
+.state-pill {
+  background: var(--state-bg, var(--st-idle-bg));
+  color: var(--state-fg, var(--st-idle));
+  text-transform: uppercase; letter-spacing: .05em; font-size: .7rem; font-weight: 600;
+}
+#status-card[data-state="connected"]     { --state-fg: var(--st-ok);   --state-bg: var(--st-ok-bg); }
+#status-card[data-state="failed"]        { --state-fg: var(--st-bad);  --state-bg: var(--st-bad-bg); }
+#status-card[data-state="unmanaged"]     { --state-fg: var(--st-warn); --state-bg: var(--st-warn-bg); }
+#status-card[data-state="starting"],
+#status-card[data-state="authenticating"],
+#status-card[data-state="connecting"],
+#status-card[data-state="disconnecting"] { --state-fg: var(--st-busy); --state-bg: var(--st-busy-bg); }
+
+.facts dt { font-size: .75rem; color: var(--bs-secondary-color); font-weight: 400; }
+.facts dd { margin: .15rem 0 0; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* --- forms --------------------------------------------------------------- */
+
+.form-control, .form-select, .input-group-text {
+  background-color: var(--bs-tertiary-bg);
+  border-color: var(--bs-border-color);
+  color: var(--bs-body-color);
+}
+.form-control:focus, .form-select:focus {
+  background-color: var(--bs-tertiary-bg);
+  border-color: var(--brand);
+  color: var(--bs-body-color);
+  box-shadow: 0 0 0 .2rem var(--brand-soft);
+}
+.form-label { font-size: .75rem; font-weight: 600; color: var(--bs-secondary-color); }
+.otp { font-variant-numeric: tabular-nums; letter-spacing: .18em; font-size: 1.1rem; }
+.input-group-text { color: var(--bs-secondary-color); }
+
+/* --- log & events -------------------------------------------------------- */
+
+.code {
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+  padding: .75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .78rem; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+.log { height: 300px; overflow-y: auto; }
+
+.events {
+  font-variant-numeric: tabular-nums;
+  height: 300px;              /* same span as the log panel above it */
+  overflow-y: auto;
+}
+.events li {
+  padding: .4rem 0; font-size: .8125rem;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+.events li:last-child { border-bottom: 0; }
+
+/* --- routes -------------------------------------------------------------- */
+
+.routes-scroll {
+  height: 300px;              /* same span as the log and events panels */
+  overflow-y: auto;
+  overflow-x: auto;           /* the owner column can be wide; scroll the table, not the page */
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+}
+.routes-filter { max-width: 14rem; }
+.route-count {
+  background: var(--brand-soft); color: var(--brand-strong);
+  font-variant-numeric: tabular-nums; font-weight: 600;
+}
+
+.routes-table {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .78rem;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 0;
+}
+.routes-table thead th {
+  position: sticky; top: 0; z-index: 1;   /* header survives the scroll */
+  background: var(--bs-tertiary-bg);
+  border-bottom: 1px solid var(--bs-border-color);
+  font-family: var(--bs-body-font-family);
+  font-size: .7rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; color: var(--bs-secondary-color);
+  white-space: nowrap;
+}
+.routes-table td, .routes-table th { padding: .3rem .6rem; }
+.routes-table td { border-color: var(--bs-border-color); }
+.routes-table tbody tr:hover td { background: var(--bs-tertiary-bg); }
+.routes-table .dst { white-space: nowrap; }
+.routes-table .muted { color: var(--bs-secondary-color); }
+.routes-table .owner {
+  max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* on-link and bypass rows are not pushed routes -- mark them so they cannot be misread */
+.route-tag {
+  font-family: var(--bs-body-font-family);
+  font-size: .65rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .04em; padding: .05rem .35rem; margin-left: .4rem;
+  border: 1px solid var(--bs-border-color); border-radius: 999px;
+  color: var(--bs-secondary-color); vertical-align: middle;
+}
+/* A public route is not wrong, just worth a second look -- brand-toned rather than a status
+   colour, since this is not a warning by itself, only where the scope panel's contradiction
+   check flags one. */
+.route-tag-public {
+  color: var(--brand-strong); background: var(--brand-soft); border-color: transparent;
+}
+
+/* --- collapsible panels -------------------------------------------------- */
+
+.panel-toggle {
+  display: inline-flex; align-items: center; gap: .55rem;
+  background: none; border: 0; padding: .25rem 0; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.panel-toggle .card-title-sm { margin-bottom: 0; }
+.panel-toggle:hover .card-title-sm { color: var(--bs-body-color); }
+.panel-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; border-radius: 3px; }
+
+/* A chevron drawn from two borders: down when open, right when collapsed. */
+.panel-chevron {
+  width: .45rem; height: .45rem; flex: none; margin-top: -.2em;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+  color: var(--bs-secondary-color);
+  transform: rotate(45deg);
+  transition: transform .15s ease;
+}
+.panel-toggle.collapsed .panel-chevron { transform: rotate(-45deg); margin-top: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .panel-chevron { transition: none; }
+}
+
+/* --- traffic graph ------------------------------------------------------- */
+
+.traffic-legend { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.traffic-key {
+  display: inline-flex; align-items: center; gap: .4rem;
+  font-size: .8rem; color: var(--bs-secondary-color);
+}
+.traffic-key::before {
+  content: ""; width: .7rem; height: .7rem; border-radius: 2px; flex: none;
+}
+.traffic-key-rx::before { background: var(--rx); }
+.traffic-key-tx::before { background: var(--tx); }
+
+.traffic-figure { margin: 0; }
+
+/* preserveAspectRatio="none" stretches the viewBox to the panel width, which is what we want
+   for a time axis; vector-effect keeps the strokes 1px instead of stretching with it. */
+.traffic-chart {
+  width: 100%; height: 160px; display: block;
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+}
+.traffic-chart .traffic-axis { stroke: var(--bs-border-color); stroke-width: 1; }
+.traffic-chart .traffic-grid  { stroke: var(--bs-border-color); stroke-width: 1; opacity: .55; }
+.traffic-chart .traffic-rx-fill { fill: var(--rx-fill); }
+.traffic-chart .traffic-tx-fill { fill: var(--tx-fill); }
+.traffic-chart .traffic-rx-line { fill: none; stroke: var(--rx); stroke-width: 1.5; }
+.traffic-chart .traffic-tx-line { fill: none; stroke: var(--tx); stroke-width: 1.5; }
+.traffic-chart [vector-effect] { vector-effect: non-scaling-stroke; }
+
+/* --- tunnel scope -------------------------------------------------------- */
+
+.scope-pill {
+  font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; font-weight: 600;
+  color: var(--st-idle); background: var(--st-idle-bg);
+}
+/* full and split share a style deliberately: the panel says which is happening, and neither is
+   the "good" one -- that depends entirely on what the operator wants the VPN for. Only a
+   contradiction between the two address families earns a colour that demands attention. */
+.scope-pill[data-mode="full"],
+.scope-pill[data-mode="split"] { color: var(--st-busy); background: var(--st-busy-bg); }
+.scope-pill[data-mode="warn"]  { color: var(--st-warn); background: var(--st-warn-bg); }
+
+.scope-verdict { font-size: 1.05rem; font-weight: 600; line-height: 1.3; }

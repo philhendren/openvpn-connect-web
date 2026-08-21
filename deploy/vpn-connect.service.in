@@ -1,0 +1,38 @@
+[Unit]
+Description=OpenVPN Connect — web control panel for the local OpenVPN client
+Documentation=file://@APP_DIR@/CLAUDE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=@VPN_OWNER@
+Group=@VPN_OWNER@
+WorkingDirectory=@APP_DIR@
+# Holds VPN_CONNECT_SECRET_KEY and VPN_CONNECT_PASSWORD_HASH; must be mode 0600.
+EnvironmentFile=@ENV_FILE@
+# One worker only: the controller keeps the management connection and tunnel state in memory.
+ExecStart=@UV@ run --frozen gunicorn \
+    --workers 1 --threads 8 --timeout 120 \
+    --bind @BIND@:@PORT@ \
+    --access-logfile - \
+    "app:create_app()"
+Restart=on-failure
+RestartSec=3
+
+# NoNewPrivileges is deliberately NOT set: the app must be able to call sudo for the helper.
+PrivateTmp=true
+ProtectSystem=full
+# ProtectSystem=full read-only-mounts /etc for this unit *and every process it spawns*, including
+# the sudo'd root helper -- it is a mount namespace, not a permission check, so being root does
+# not get you out of it. Without this line `dns-apply` fails with "install: Read-only file
+# system" even though it runs as root. Punch out only the one directory it writes.
+# The leading '-' keeps the unit startable on a box that has no dnsmasq installed.
+ReadWritePaths=-@DNS_DIR@
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

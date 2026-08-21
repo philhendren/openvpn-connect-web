@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# never commit profiles, certs, credentials or the web env file
+*.ovpn
+credentials
+webapp.env
+webapp.env.bak-*
+*.db
+
+# AI assistant working files. These are this machine's notes, not the project: the session log
+# and project context record a specific concentrator, its internal DNS names and the operator's
+# username, none of which belong in a public repository.
+CLAUDE.md
+.claude/

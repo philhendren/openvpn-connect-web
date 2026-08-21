@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Sign in — OpenVPN Connect{% endblock %}
+{% block subtitle %}Sign in to continue{% endblock %}
+{% block content %}
+<main class="card card-narrow mx-auto">
+  <div class="card-body p-4">
+    <h2 class="h6 text-uppercase text-body-secondary mb-3">Sign in</h2>
+    <p class="text-body-secondary small">This panel controls the VPN tunnel on this machine.</p>
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label for="password" class="form-label">Password</label>
+      <input id="password" name="password" type="password" class="form-control"
+             autocomplete="current-password" required autofocus>
+      <button type="submit" class="btn btn-brand w-100 mt-3">Sign in</button>
+    </form>
+  </div>
+</main>
+{% endblock %}
