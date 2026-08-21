@@ -59,11 +59,11 @@ jobs:
       - name: Run tests
         run: uv run --frozen pytest -q --cov=app --cov-report=term-missing --cov-report=xml
 
-      # One version's report is enough: the two legs cover the same lines, and two summaries on a
-      # run would just be noise. It goes to three places because they are read by different people
-      # at different times -- a notice on the run page (visible without opening anything), the job
-      # log (where someone debugging a failure already is), and the run summary (which survives as
-      # the record of the run).
+      # One version's report is enough -- the two legs cover the same lines, and two summaries on
+      # a run would just be noise.
+      # Three places, because they are read by different people at different times: a notice on
+      # the run page (visible without opening anything), the job log (where someone debugging a
+      # failure already is), and the run summary (which survives as the record of the run).
       - name: Coverage summary
         if: matrix.python-version == '3.13'
         run: |
@@ -112,4 +112,3 @@ jobs:
           for script in install_prerequisites.sh deploy/install.sh deploy/vpn-connect-helper.in; do
             bash -n "$script" && echo "ok: $script"
           done
-
