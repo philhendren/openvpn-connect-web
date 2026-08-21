@@ -1121,6 +1121,16 @@
     ended:        { label: "Ended",             tone: "idle" },
   };
 
+  /* Hours stop being readable somewhere around a day: "172h 30m" of connected time over a week
+     is a number nobody reads, and a nine-hour session and a nine-day one should not look alike. */
+  const spanText = (seconds) => {
+    if (!seconds) return "0s";
+    if (seconds < 86400) return duration(Math.round(seconds));
+    const days = Math.floor(seconds / 86400);
+    const hours = Math.round((seconds % 86400) / 3600);
+    return `${days}d ${hours}h`;
+  };
+
   const when = (iso) => {
     if (!iso) return "—";
     const at = new Date(iso);
@@ -1168,7 +1178,7 @@
     /* Time *connected*, not time spent attempting: an attempt that never came up did not have
        a tunnel for any length of time, and reporting its fifteen seconds here would put it in
        the same column as a nine-hour session. */
-    up.textContent = session.connected ? duration(Math.round(session.up_seconds || 0)) : "—";
+    up.textContent = session.connected ? spanText(session.up_seconds || 0) : "—";
     if (!session.connected) up.className = "muted";
 
     const ended = document.createElement("td");
@@ -1198,9 +1208,9 @@
   const renderSummary = (payload) => {
     const summary = payload.summary || {};
     text("sessions-count", summary.sessions ? String(summary.sessions) : "0");
-    text("sessions-uptime", summary.sessions ? duration(Math.round(summary.up_seconds || 0)) : "—");
-    text("sessions-longest", summary.connected ? duration(Math.round(summary.longest_up_seconds || 0)) : "—");
-    text("sessions-median", summary.connected ? duration(Math.round(summary.median_up_seconds || 0)) : "—");
+    text("sessions-uptime", summary.sessions ? spanText(summary.up_seconds || 0) : "—");
+    text("sessions-longest", summary.connected ? spanText(summary.longest_up_seconds || 0) : "—");
+    text("sessions-median", summary.connected ? spanText(summary.median_up_seconds || 0) : "—");
     /* Drops and disconnects side by side, because the number only means something next to the
        one it is not: "four drops, one of them yours" is a different week from "four drops". */
     text("sessions-drops", summary.sessions
