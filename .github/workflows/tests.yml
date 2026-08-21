@@ -33,9 +33,13 @@ jobs:
         python-version: ["3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      # Both on node24: the node20 runtime these were on before is deprecated, and the runner was
+      # already forcing them onto node24 with a warning on every job. checkout publishes a moving
+      # major tag; setup-uv does not, so it is pinned to an exact release and has to be bumped by
+      # hand when its runtime moves again.
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
@@ -52,9 +56,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
