@@ -9,7 +9,7 @@ from dataclasses import replace
 import pytest
 
 from app import create_app
-from app.services import store
+from app.services import access, store
 from app.services.dns_rules import DnsRules
 from app.services.openvpn import CONNECTED, VpnError, VpnStatus
 from app.services.routing import Route
@@ -1015,3 +1015,147 @@ def test_deploy_status_surfaces_a_damaged_env_file(auth_client, config):
     payload = auth_client.get("/api/deploy").get_json()
     assert payload["clean"] is False
     assert [item["kind"] for item in payload["items"]] == ["env"]
+
+
+# --- the source-address allowlist -------------------------------------------
+#
+# The app fixture leaves VPN_CONNECT_ALLOW_FROM unset, so every other test in this file is
+# already running against the loopback-only default with the test client's 127.0.0.1.
+
+#: This machine's real tun0 address. RFC1918, exactly like the LAN it must be told apart from.
+VPN_SIDE = "172.27.246.54"
+
+
+def _from(test_client, path, address, **kwargs):
+    return test_client.get(path, environ_overrides={"REMOTE_ADDR": address}, **kwargs)
+
+
+@pytest.mark.parametrize("path", ["/", "/login", "/api/status", "/static/css/app.css"])
+def test_an_address_off_the_list_is_refused_everywhere(client, path):
+    """Registered on the app, not a blueprint, so static files and the login form are covered
+    too -- a gate with a hole in it is not a gate."""
+    assert _from(client, path, VPN_SIDE).status_code == 403
+
+
+def test_the_refusal_says_how_to_fix_it(client):
+    body = _from(client, "/login", VPN_SIDE).get_data(as_text=True)
+    assert "VPN_CONNECT_ALLOW_FROM" in body
+    assert "install.sh" in body
+
+
+def test_a_refused_request_never_reaches_the_login_throttle(app, config):
+    """Denied peers short-circuit before the route, so they cannot burn the lockout budget of
+    someone who is allowed to sign in."""
+    import app.routes.ui as ui
+
+    ui._throttle = None
+    test_client = app.test_client()
+    token = _extract_csrf(test_client.get("/login").get_data(as_text=True))
+    for _ in range(config.LOGIN_MAX_ATTEMPTS * 2):
+        test_client.post(
+            "/login",
+            data={"password": "nope", "csrf_token": token},
+            environ_overrides={"REMOTE_ADDR": VPN_SIDE},
+        )
+    response = test_client.post("/login", data={"password": PASSWORD, "csrf_token": token})
+    assert response.status_code == 302
+
+
+def test_widening_the_list_lets_the_lan_in_but_still_not_the_tunnel(app):
+    app.config["ALLOW_NETWORKS"] = access.parse_allow_from("127.0.0.0/8,192.168.4.0/22")
+    test_client = app.test_client()
+    assert _from(test_client, "/login", "192.168.4.46").status_code == 200
+    assert _from(test_client, "/login", VPN_SIDE).status_code == 403
+
+
+def test_a_malformed_allowlist_stops_the_app_from_starting(config):
+    """Better than booting with a list nobody can be sure of."""
+    with pytest.raises(access.AccessError):
+        create_app({"APP_CONFIG": replace(config, ALLOW_FROM="192.168.4.0/22,nonsense")})
+
+
+# --- attributing logins behind a reverse proxy ------------------------------
+
+
+def _exhaust_login(test_client, config, token, headers=None):
+    for _ in range(config.LOGIN_MAX_ATTEMPTS):
+        test_client.post(
+            "/login", data={"password": "nope", "csrf_token": token}, headers=headers or {}
+        )
+
+
+def test_without_proxy_trust_everyone_behind_it_shares_one_lockout(app, config):
+    """The bug this exists to fix: behind `tailscale serve` every peer is 127.0.0.1, so one
+    device's fumbled attempts lock out every other device."""
+    import app.routes.ui as ui
+
+    ui._throttle = None
+    test_client = app.test_client()
+    token = _extract_csrf(test_client.get("/login").get_data(as_text=True))
+    _exhaust_login(test_client, config, token, {"X-Forwarded-For": "100.64.0.1"})
+    response = test_client.post(
+        "/login",
+        data={"password": PASSWORD, "csrf_token": token},
+        headers={"X-Forwarded-For": "100.64.0.2"},
+    )
+    assert response.status_code == 429
+
+
+def test_with_proxy_trust_each_client_gets_its_own_lockout(app, config):
+    import app.routes.ui as ui
+
+    ui._throttle = None
+    app.config["TRUSTED_PROXY_NETWORKS"] = access.parse_networks("127.0.0.0/8")
+    test_client = app.test_client()
+    token = _extract_csrf(test_client.get("/login").get_data(as_text=True))
+    _exhaust_login(test_client, config, token, {"X-Forwarded-For": "100.64.0.1"})
+    # The one that ran out of attempts is still locked...
+    locked = test_client.post(
+        "/login",
+        data={"password": PASSWORD, "csrf_token": token},
+        headers={"X-Forwarded-For": "100.64.0.1"},
+    )
+    assert locked.status_code == 429
+    # ...but a different device on the same tailnet is unaffected.
+    response = test_client.post(
+        "/login",
+        data={"password": PASSWORD, "csrf_token": token},
+        headers={"X-Forwarded-For": "100.64.0.2"},
+    )
+    assert response.status_code == 302
+
+
+def test_a_forged_header_cannot_escape_a_lockout(app, config):
+    """Rightmost-wins, end to end: the attacker prepends a fresh address each time, the proxy
+    appends the real one, and the real one is what the throttle counts."""
+    import app.routes.ui as ui
+
+    ui._throttle = None
+    app.config["TRUSTED_PROXY_NETWORKS"] = access.parse_networks("127.0.0.0/8")
+    test_client = app.test_client()
+    token = _extract_csrf(test_client.get("/login").get_data(as_text=True))
+    for i in range(config.LOGIN_MAX_ATTEMPTS):
+        test_client.post(
+            "/login",
+            data={"password": "nope", "csrf_token": token},
+            headers={"X-Forwarded-For": f"10.0.0.{i}, 100.64.0.9"},
+        )
+    response = test_client.post(
+        "/login",
+        data={"password": PASSWORD, "csrf_token": token},
+        headers={"X-Forwarded-For": "10.0.0.250, 100.64.0.9"},
+    )
+    assert response.status_code == 429
+
+
+def test_the_allowlist_never_reads_the_header(app):
+    """The gate and the throttle ask different questions. A forwarded header must not open the
+    gate, even from a peer trusted to name clients."""
+    app.config["TRUSTED_PROXY_NETWORKS"] = access.parse_networks("127.0.0.0/8")
+    test_client = app.test_client()
+    response = test_client.get(
+        "/login",
+        environ_overrides={"REMOTE_ADDR": VPN_SIDE},
+        headers={"X-Forwarded-For": "127.0.0.1"},
+    )
+    assert response.status_code == 403

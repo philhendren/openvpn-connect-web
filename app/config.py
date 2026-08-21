@@ -50,6 +50,16 @@ class Config:
     SESSION_HOURS: int = field(default_factory=lambda: _env_int("SESSION_HOURS", 12))
     #: Only enable when served over TLS -- a plain-HTTP LAN deployment must leave this off.
     SESSION_COOKIE_SECURE: bool = field(default_factory=lambda: _env_bool("COOKIE_SECURE", False))
+    #: Comma-separated CIDRs allowed to reach the panel at all, tested against the real socket
+    #: peer before anything else happens. Empty means loopback only -- see app/services/access.py
+    #: for why an unset value cannot safely mean "everything", and why this is an explicit list
+    #: rather than a private-vs-public test.
+    ALLOW_FROM: str = field(default_factory=lambda: _env("ALLOW_FROM"))
+    #: Comma-separated CIDRs of reverse proxies whose ``X-Forwarded-For`` may be believed, and
+    #: only for attributing a request to a client -- never for the allowlist above. Empty means
+    #: no header is read at all, so a direct install behaves exactly as if this did not exist.
+    #: Set it to 127.0.0.0/8 when something like `tailscale serve` fronts the app on loopback.
+    TRUSTED_PROXIES: str = field(default_factory=lambda: _env("TRUSTED_PROXIES"))
     LOGIN_MAX_ATTEMPTS: int = field(default_factory=lambda: _env_int("LOGIN_MAX_ATTEMPTS", 5))
     LOGIN_LOCKOUT_SECONDS: int = field(
         default_factory=lambda: _env_int("LOGIN_LOCKOUT_SECONDS", 300)

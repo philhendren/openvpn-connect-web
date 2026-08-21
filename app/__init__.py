@@ -15,7 +15,7 @@ from flask import Flask, jsonify, request
 from app.auth import CsrfError, hash_password
 from app.config import Config, load_config
 from app.db import open_migrated
-from app.services import vault
+from app.services import access, vault
 from app.services.connections import Connections
 from app.services.dns_rules import DnsRules
 from app.services.history import History
@@ -56,6 +56,24 @@ def create_app(overrides: Mapping[str, Any] | None = None) -> Flask:
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
 
+    # Parsed once, here, rather than per request: a malformed CIDR is a refusal to start with an
+    # allowlist nobody can be sure of, not a 500 on whichever request happens to arrive first.
+    app.config.setdefault("ALLOW_NETWORKS", access.parse_allow_from(config.ALLOW_FROM))
+    app.config.setdefault(
+        "TRUSTED_PROXY_NETWORKS",
+        access.parse_networks(config.TRUSTED_PROXIES, "VPN_CONNECT_TRUSTED_PROXIES"),
+    )
+    app.logger.info("Allowing requests from %s", access.describe(app.config["ALLOW_NETWORKS"]))
+    # Logged either way: "is the proxy header being believed?" is the first thing worth knowing
+    # when a lockout attributes every attempt to 127.0.0.1.
+    if app.config["TRUSTED_PROXY_NETWORKS"]:
+        app.logger.info(
+            "Trusting X-Forwarded-For from %s",
+            access.describe(app.config["TRUSTED_PROXY_NETWORKS"]),
+        )
+    else:
+        app.logger.info("Not trusting X-Forwarded-For from anywhere")
+
     # SQLite is opened and migrated at startup: a schema older than the code is a startup
     # failure, not something to discover on the first query. threadsafety is 3, so one
     # connection is shared across gunicorn's threads.
@@ -90,6 +108,29 @@ def create_app(overrides: Mapping[str, Any] | None = None) -> Flask:
 
     app.register_blueprint(ui_bp)
     app.register_blueprint(api_bp)
+
+    @app.before_request
+    def _enforce_allowlist():
+        """Refuse anything not on the allowlist, before any route sees it.
+
+        Registered on the app rather than a blueprint so it covers every path -- static files and
+        the login form included. Returning a response here short-circuits the request, so nothing
+        below this point runs for a denied peer: no session load, no CSRF check, no login attempt
+        and therefore no way to consume the lockout budget of a legitimate user.
+        """
+        if access.is_allowed(request.remote_addr, app.config["ALLOW_NETWORKS"]):
+            return None
+        app.logger.warning("Refused %s for %s", request.remote_addr, request.path)
+        # Says how to fix it on purpose. The likely reader is the operator who just widened BIND
+        # without widening this, and the alternative to naming the setting is a bare 403 that
+        # looks like the app is broken. A denied peer learns an environment variable name, which
+        # it cannot read, so there is nothing here worth withholding.
+        return (
+            "Forbidden: this address is not in VPN_CONNECT_ALLOW_FROM.\n"
+            "Re-run sudo ./deploy/install.sh to change which addresses may connect.\n",
+            403,
+            {"Content-Type": "text/plain; charset=utf-8"},
+        )
 
     @app.errorhandler(CsrfError)
     def _csrf_failed(exc: CsrfError):

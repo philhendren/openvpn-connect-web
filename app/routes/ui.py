@@ -24,7 +24,7 @@ from app.auth import (
     validate_csrf,
     verify_password,
 )
-from app.services import store
+from app.services import access, store
 from app.services.notify import PLACEHOLDERS, TITLES
 from app.services.vault import VaultError
 
@@ -70,7 +70,14 @@ def login():
     if not config.PASSWORD_HASH:
         return render_template("setup.html"), 503
 
-    client = request.remote_addr or "unknown"
+    # The socket peer, unless a trusted proxy named someone else. Behind `tailscale serve` every
+    # peer is 127.0.0.1, which would put every device on the tailnet in one lockout bucket: five
+    # fumbled attempts on a phone would lock out the laptop too.
+    client = access.client_address(
+        request.remote_addr,
+        request.headers.get("X-Forwarded-For"),
+        current_app.config["TRUSTED_PROXY_NETWORKS"],
+    )
     if request.method == "POST":
         locked = _get_throttle().seconds_remaining(client)
         if locked:

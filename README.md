@@ -102,16 +102,22 @@ uv run flask --app app set-password >> ~/.vpn/webapp.env    # sets the web login
 sudo systemctl enable --now vpn-connect
 ```
 
-The installer asks one question — which address to listen on — and defaults to localhost. Setting
-`BIND` in the environment answers it in advance and skips the prompt entirely, which is what makes
-unattended installs work:
+The installer asks which address to listen on, and defaults to localhost. If you choose anything
+wider it asks a second question — which source addresses may actually connect — and proposes a list
+based on what it finds on the machine. Setting `BIND` and `ALLOW_FROM` in the environment answers
+both in advance and skips the prompts entirely, which is what makes unattended installs work:
 
 ```bash
 sudo BIND=0.0.0.0 PORT=5000 ./deploy/install.sh
+sudo BIND=0.0.0.0 ALLOW_FROM=127.0.0.0/8,192.168.4.0/22 ./deploy/install.sh   # fully scripted
 ```
 
 On a re-run the address already in the installed unit becomes the default, so pressing enter never
-silently takes away access you had already set up.
+silently takes away access you had already set up. The same goes for the allowlist, which is read
+back out of `webapp.env` and rewritten in place on every run.
+
+See [the allowlist](#the-allowlist) for why the second question exists — the short version is that
+`0.0.0.0` includes the VPN interface.
 
 `install.sh` puts three things on the system, and nothing else:
 
@@ -154,21 +160,88 @@ The default is `127.0.0.1`, reachable only from the machine itself:
 ssh -L 5000:localhost:5000 <host>     # then open http://localhost:5000/
 ```
 
-Choosing `0.0.0.0` at install time puts the login page on every interface, so anything on your LAN
-can reach it — and this panel can rewrite the machine's routing and DNS, which makes the login
-password the only barrier in front of a root-equivalent tool. That is a real trade-off for being able
-to open it on your phone; make it deliberately. Mitigations in place: scrypt-hashed password,
-signed session cookie, per-IP lockout after 5 failures, CSRF on every state change, `POST`-only
-state changes, and a restrictive CSP.
+Choosing `0.0.0.0` at install time puts the login page on every interface — and this panel can
+rewrite the machine's routing and DNS, which makes the login password the only barrier in front of
+a root-equivalent tool. Mitigations in place: scrypt-hashed password, signed session cookie,
+per-IP lockout after 5 failures, CSRF on every state change, `POST`-only state changes, and a
+restrictive CSP.
 
-A middle option, if you run [Tailscale](https://tailscale.com/) or similar: bind the tailnet
-address instead of `0.0.0.0`, and only your own devices can reach it, from anywhere.
+### The allowlist
 
-```bash
-sudo BIND=100.64.0.5 PORT=5000 ./deploy/install.sh    # your tailnet IP
+**Every interface includes `tun0`.** While the VPN is up, binding `0.0.0.0` means the network at
+the far end of the tunnel can reach your control panel — which is almost certainly not what you
+wanted from "let me open it on my phone". So the app checks every request's source address before
+authentication, and refuses anything not on a list you set:
+
+```
+VPN_CONNECT_ALLOW_FROM='127.0.0.0/8,192.168.4.0/22,100.64.0.0/10'
 ```
 
-There is no TLS, so leave `VPN_CONNECT_COOKIE_SECURE` off unless you put a reverse proxy in front.
+The installer proposes this list for you when you choose a non-loopback bind: loopback, the subnet
+behind your default route, and `100.64.0.0/10` if a `tailscale0` interface exists. Press enter to
+accept it or type your own. Bare addresses become `/32`, and host bits are tolerated — pasting
+`192.168.4.46/22` straight out of `ip addr` gives you `192.168.4.0/22`.
+
+Note that this cannot be a "block private addresses" rule: a `tun0` address is RFC1918 too, exactly
+like your LAN. Only you know which private network is yours, so the list is explicit or nothing.
+
+Two consequences worth knowing:
+
+- **Unset means loopback only.** The list fails closed, so if you widen `BIND` without widening
+  this you will get a 403 rather than a login page. The 403 says so, and re-running the installer
+  fixes it.
+- **A malformed entry stops the app from starting**, naming the bad token. Skipping it silently
+  would either lock you out or leave the list wider than the file says.
+
+### Tailscale
+
+If you run [Tailscale](https://tailscale.com/), `100.64.0.0/10` in the allowlist gets you your own
+devices from anywhere. With HTTPS Certificates enabled on your tailnet you can also have a real
+Let's Encrypt certificate with no open ports and no DNS provider:
+
+```bash
+sudo tailscale serve --bg --https=443 http://127.0.0.1:5000
+sudo TRUSTED_PROXIES=127.0.0.0/8 ./deploy/install.sh    # see below
+sudo systemctl restart vpn-connect
+```
+
+Do **not** use `tailscale funnel` for this — that publishes the panel to the open internet.
+
+### Behind a reverse proxy
+
+Anything fronting the app — `tailscale serve`, Caddy, nginx — makes every request arrive from
+`127.0.0.1`, so the per-IP login lockout stops distinguishing devices: five fumbled attempts on a
+phone would lock out the laptop too. `VPN_CONNECT_TRUSTED_PROXIES` fixes that by naming the peers
+whose `X-Forwarded-For` may be believed:
+
+```
+VPN_CONNECT_TRUSTED_PROXIES='127.0.0.0/8'
+```
+
+Empty by default, which means no forwarded header is read at all — with nothing in front of the
+app, `X-Forwarded-For` is just a header a client made up.
+
+Two things this deliberately does *not* do:
+
+- **It never affects the allowlist.** Who may connect is always decided on the real socket peer,
+  so a forwarded header cannot open the gate. The two questions — "may you connect?" and "who
+  are you?" — get different answers from different sources, which is why the app doesn't use
+  Werkzeug's `ProxyFix` (it would rewrite `REMOTE_ADDR` for both).
+- **It reads the chain right to left.** A proxy *appends*, so in `1.2.3.4, 100.64.0.9` only the
+  right-hand entry was observed by your proxy and the left is whatever the client sent. Trusting
+  the leftmost is the standard way to let an attacker pick a fresh identity per request and never
+  hit the lockout at all.
+
+To check it is working, fail a login on purpose and look at the log — it records the address the
+request was attributed to:
+
+```bash
+journalctl -u vpn-connect -f | grep 'failed login'
+```
+
+There is otherwise no TLS, so leave `VPN_CONNECT_COOKIE_SECURE` off unless you put a reverse proxy
+in front. Never port-forward this from your router: use the SSH tunnel, a tailnet, or a reverse
+proxy you control.
 
 ## Configuration
 
@@ -178,6 +251,8 @@ Everything is `VPN_CONNECT_*` environment variables, read at startup from `~/.vp
 | --- | --- | --- |
 | `SECRET_KEY` | random per boot | session signing; set it, or sessions drop on restart |
 | `PASSWORD_HASH` | *(unset)* | web login; without it the app shows a setup page |
+| `ALLOW_FROM` | *(unset — loopback only)* | comma-separated CIDRs allowed to connect at all, checked before login |
+| `TRUSTED_PROXIES` | *(unset — trust nothing)* | CIDRs whose `X-Forwarded-For` names the real client, for the login throttle only |
 | `VPN_DIR` | `~/.vpn` | the state directory described above |
 | `DATABASE` | `~/.vpn/vpn-connect.db` | connections, DNS rules, history, notification settings |
 | `ENV_FILE` | `~/.vpn/webapp.env` | this file; read only so the deployment check can spot damage in it |
