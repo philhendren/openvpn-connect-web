@@ -1,0 +1,114 @@
+# Runs the suite on every pull request, and on pushes to main.
+#
+# Nothing here needs openvpn, dnsmasq or systemd: the tests fake subprocess.run, the management
+# socket and every HTTP call, and assert on the argv that *would* have run. That is what makes a
+# stock ubuntu runner a fair place to run them.
+
+name: tests
+
+# Both triggers on purpose. `push` is what makes a branch go green before anyone opens anything;
+# `pull_request` is what covers PRs from forks, whose pushes never reach this repository. The cost
+# is that a PR from a branch *in* this repo runs twice, which is the usual trade and cheap here.
+on:
+  push:
+  pull_request:
+
+# A second push to a PR makes the first run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      # Both versions report, rather than the second being cancelled by the first failure --
+      # "fails only on 3.12" is the useful half of the answer.
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      # Both on node24: the node20 runtime these were on before is deprecated, and the runner was
+      # already forcing them onto node24 with a warning on every job. checkout publishes a moving
+      # major tag; setup-uv does not, so it is pinned to an exact release and has to be bumped by
+      # hand when its runtime moves again.
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          # Without a suffix every job derives the same cache key and they race to save it, which
+          # the runner reports as "Unable to reserve cache ... another job may be creating this
+          # cache". Harmless, but it is a warning on every run, and a warning nobody acts on is
+          # one nobody reads.
+          cache-suffix: py${{ matrix.python-version }}
+
+      # --frozen throughout: uv.lock is committed, so CI must fail on a lockfile that no longer
+      # matches pyproject.toml rather than quietly resolving something newer and testing that.
+      - name: Install dependencies
+        run: uv sync --frozen --python ${{ matrix.python-version }}
+
+      # Coverage runs here but not in the local default (see pyproject.toml): CI has the time, and
+      # a number nobody can see is a number nobody maintains. The floor that fails the job lives
+      # in pyproject.toml, so it is the same one a developer hits locally.
+      - name: Run tests
+        run: uv run --frozen pytest -q --cov=app --cov-report=term-missing --cov-report=xml
+
+      # One version's report is enough -- the two legs cover the same lines, and two summaries on
+      # a run would just be noise.
+      # Three places, because they are read by different people at different times: a notice on
+      # the run page (visible without opening anything), the job log (where someone debugging a
+      # failure already is), and the run summary (which survives as the record of the run).
+      - name: Coverage summary
+        if: matrix.python-version == '3.13'
+        run: |
+          total="$(uv run --frozen coverage report --format=total --precision=1)"
+          echo "::notice title=Coverage::Total coverage ${total}%"
+          {
+            echo "## Coverage: ${total}%"
+            echo
+            uv run --frozen coverage report --format=markdown
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage report
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 14
+
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          cache-suffix: lint   # its own key, for the reason given in the test job
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: ruff check
+        run: uv run --frozen ruff check .
+
+      - name: ruff format
+        run: uv run --frozen ruff format --check .
+
+      # The shell is part of the privilege boundary here, so a syntax error in it matters as much
+      # as one in the Python. Only a parse check: the helper is a template full of @PLACEHOLDER@
+      # tokens and is never executed in this form.
+      - name: Shell syntax
+        run: |
+          for script in install_prerequisites.sh deploy/install.sh deploy/vpn-connect-helper.in; do
+            bash -n "$script" && echo "ok: $script"
+          done

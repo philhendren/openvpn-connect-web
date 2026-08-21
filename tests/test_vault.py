@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
+from app import auth
 from app.services import vault
 from app.services.vault import ENCRYPTED_COLUMNS, VaultError, VaultLocked, VaultState
 
@@ -177,3 +180,39 @@ def test_state_holds_and_releases_the_key(db):
     assert state.require() is key
     state.lock()
     assert not state.unlocked
+
+
+# --- the cost of the key derivation, as shipped ------------------------------
+#
+# The suite runs with cheap scrypt parameters (see tests/conftest.py), which is the difference
+# between an eight-second run and a minute of deriving keys nobody looks at. These two tests are
+# what keeps that shortcut honest: they load a *fresh* copy of each module, unpatched, and check
+# what a real install would actually use. Weakening the real cost then has to be done here, in the
+# open, rather than by the test-only value quietly becoming the default.
+#
+# The login hash is checked here too rather than in test_web.py: it is the same decision as the
+# vault's -- how expensive it is to turn the operator's password into a key -- and splitting the
+# guard across two files is how one half of it gets forgotten.
+
+
+def _as_shipped(module):
+    """Import a second, unpatched copy of a module, leaving the cached one alone."""
+    spec = importlib.util.spec_from_file_location(f"{module.__name__}__as_shipped", module.__file__)
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
+    return fresh
+
+
+def test_the_shipped_vault_cost_has_not_been_weakened():
+    shipped = _as_shipped(vault)
+    assert shipped.SCRYPT_N == shipped.SCRYPT_N_PRODUCTION == 2**15
+    assert (shipped.SCRYPT_R, shipped.SCRYPT_P) == (8, 1)
+    # A patched module is what the rest of the suite runs against; the production constant is the
+    # one thing conftest must never touch.
+    assert vault.SCRYPT_N_PRODUCTION == 2**15
+
+
+def test_the_shipped_login_hash_cost_has_not_been_weakened():
+    shipped = _as_shipped(auth)
+    assert shipped.PASSWORD_HASH_METHOD == shipped.PASSWORD_HASH_METHOD_PRODUCTION == "scrypt"
+    assert auth.PASSWORD_HASH_METHOD_PRODUCTION == "scrypt"

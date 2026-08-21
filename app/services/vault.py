@@ -35,7 +35,14 @@ log = logging.getLogger(__name__)
 
 #: scrypt parameters. n=2**15 costs roughly a tenth of a second and 32MB, which is a sensible
 #: price on a login that happens a few times a day.
-SCRYPT_N = 2**15
+#:
+#: That price is paid on every unlock, and the test suite unlocks a vault in most of its fixtures
+#: -- so the tests lower ``SCRYPT_N`` (see tests/conftest.py) and would otherwise spend the best
+#: part of a minute deriving keys nobody looks at. ``SCRYPT_N_PRODUCTION`` is the value a real
+#: install must use and is never patched; ``test_vault.py`` asserts it has not been weakened, so
+#: the test-only shortcut cannot quietly become the shipped setting.
+SCRYPT_N_PRODUCTION = 2**15
+SCRYPT_N = SCRYPT_N_PRODUCTION
 SCRYPT_R = 8
 SCRYPT_P = 1
 SCRYPT_MAXMEM = 64 * 1024 * 1024

@@ -4,6 +4,8 @@
 #
 #   sudo ./deploy/install.sh                    # asks where to listen; defaults to 127.0.0.1:5000
 #   sudo BIND=0.0.0.0 PORT=5000 ./deploy/install.sh   # setting BIND skips the question
+#   sudo BIND=0.0.0.0 ALLOW_FROM=127.0.0.0/8,192.168.4.0/22 ./deploy/install.sh   # fully scripted
+#   sudo TRUSTED_PROXIES=127.0.0.0/8 ./deploy/install.sh   # something like `tailscale serve` in front
 #
 # Re-runnable: every step overwrites its previous output.
 
@@ -82,6 +84,82 @@ fi
     echo "BIND must be an IPv4 address, got '$BIND'." >&2
     exit 1
 }
+
+# --- who may actually connect ------------------------------------------------
+#
+# Binding is not a security boundary: 0.0.0.0 listens on *every* interface, and while the VPN is
+# up that includes tun0 -- so without this list the network at the far end of the tunnel can
+# reach the panel. The app tests every request's source against these CIDRs before authentication.
+#
+# Named explicitly rather than derived from "is it a private address", because a tun0 address is
+# private too. Only the operator knows which private network is theirs.
+lan_cidr() {
+    local dev
+    dev="$(ip -4 route show default 2>/dev/null | awk '{print $5; exit}')"
+    [[ -n "$dev" ]] || return 1
+    # The kernel's own on-link route is already the network address, so there is no netmask
+    # arithmetic to get wrong here -- 192.168.4.0/22, not the 192.168.4.46/22 that `ip addr` says.
+    ip -4 -o route show dev "$dev" scope link proto kernel 2>/dev/null | awk '{print $1; exit}'
+}
+
+installed_allow_from() {
+    [[ -f "$ENV_FILE" ]] || return 1
+    sed -n "s/^VPN_CONNECT_ALLOW_FROM='\(.*\)'$/\1/p" "$ENV_FILE" | tail -1
+}
+
+if [[ -z "${ALLOW_FROM:-}" ]]; then
+    ALLOW_FROM="$(installed_allow_from || true)"
+    if [[ -z "$ALLOW_FROM" ]]; then
+        if [[ "$BIND" == "127.0.0.1" ]]; then
+            ALLOW_FROM="127.0.0.0/8"
+        else
+            LAN="$(lan_cidr || true)"
+            ALLOW_FROM="127.0.0.0/8${LAN:+,$LAN}"
+            # The tailnet range, not this node's address: Tailscale hands out a new one whenever
+            # it feels like it, and 100.64.0.0/10 is the whole CGNAT space it draws from.
+            ip -o link show tailscale0 >/dev/null 2>&1 && ALLOW_FROM="$ALLOW_FROM,100.64.0.0/10"
+        fi
+    fi
+    if [[ -t 0 && "$BIND" != "127.0.0.1" ]]; then
+        cat <<EOF
+
+Listening on $BIND means every interface, including tun0 while the VPN is up.
+Which source addresses may reach the panel?
+
+  Detected: $ALLOW_FROM
+
+Press enter to accept, or type a comma-separated list of CIDRs.
+EOF
+        read -r -p "Allow from [$ALLOW_FROM]: " answer || answer=""
+        [[ -n "$answer" ]] && ALLOW_FROM="$answer"
+    fi
+fi
+
+# Charset only. The app parses this properly at startup and refuses to start on a bad entry
+# rather than skipping it; this check exists to catch a typo now instead of at first boot, and to
+# keep quotes and shell metacharacters out of the env file.
+[[ "$ALLOW_FROM" =~ ^[0-9a-fA-F.:/,]+$ ]] || {
+    echo "ALLOW_FROM must be comma-separated addresses or CIDRs, got '$ALLOW_FROM'." >&2
+    exit 1
+}
+
+# --- reverse proxy, if any ---------------------------------------------------
+#
+# Only consulted to decide who a request belongs to for the login throttle -- never to decide who
+# may connect, which is always the real socket peer. Empty is the right default: with nothing in
+# front of the app, X-Forwarded-For is a header a client made up.
+#
+# Set this to 127.0.0.0/8 when something like `tailscale serve` fronts the app on loopback,
+# otherwise every device behind it shares one lockout bucket.
+TRUSTED_PROXIES="${TRUSTED_PROXIES:-$(
+    [[ -f "$ENV_FILE" ]] &&
+        sed -n "s/^VPN_CONNECT_TRUSTED_PROXIES='\(.*\)'$/\1/p" "$ENV_FILE" | tail -1
+)}"
+
+[[ -z "$TRUSTED_PROXIES" || "$TRUSTED_PROXIES" =~ ^[0-9a-fA-F.:/,]+$ ]] || {
+    echo "TRUSTED_PROXIES must be comma-separated addresses or CIDRs, got '$TRUSTED_PROXIES'." >&2
+    exit 1
+}
 UV="${UV:-$(sudo -u "$VPN_OWNER" -H bash -lc 'command -v uv' || true)}"
 
 [[ $EUID -eq 0 ]] || { echo "Run this with sudo." >&2; exit 1; }
@@ -137,6 +215,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
         echo "VPN_CONNECT_HELPER='$HELPER'"
         echo "VPN_CONNECT_MGMT_SOCKET='$RUN_DIR/mgmt.sock'"
         echo "VPN_CONNECT_STATIC_CHALLENGE='$CHALLENGE'"
+        echo "VPN_CONNECT_ALLOW_FROM='$ALLOW_FROM'"
+        echo "VPN_CONNECT_TRUSTED_PROXIES='$TRUSTED_PROXIES'"
         if [[ -n "$LEGACY_DNS_CONF" ]]; then
             echo "VPN_CONNECT_DNS_LEGACY_CONF='$LEGACY_DNS_CONF'"
         fi
@@ -144,6 +224,26 @@ if [[ ! -f "$ENV_FILE" ]]; then
     } > "$ENV_FILE"
     chown "$VPN_OWNER:$VPN_OWNER" "$ENV_FILE"
     chmod 0600 "$ENV_FILE"
+else
+    # The heredoc above only ever runs on a first install, so on every re-run this is the only
+    # thing that keeps the env file in step with the answers just given. Without it, widening
+    # BIND on an existing box would leave the old allowlist in force and lock the operator out
+    # of the address they had just asked for.
+    #
+    # Replaces rather than appends: systemd takes the last of a duplicated key and would behave
+    # correctly, but the app's own deployment self-check reports duplicate assignments as drift,
+    # so appending would light up the drift banner on every page load.
+    upsert_env() {
+        local key="$1" value="$2" tmp
+        tmp="$(mktemp)"
+        grep -v "^${key}=" "$ENV_FILE" > "$tmp" || true
+        echo "${key}='${value}'" >> "$tmp"
+        install -o "$VPN_OWNER" -g "$VPN_OWNER" -m 0600 "$tmp" "$ENV_FILE"
+        rm -f "$tmp"
+    }
+    echo "==> Updating access settings in $ENV_FILE"
+    upsert_env VPN_CONNECT_ALLOW_FROM "$ALLOW_FROM"
+    upsert_env VPN_CONNECT_TRUSTED_PROXIES "$TRUSTED_PROXIES"
 fi
 
 echo "==> Reloading systemd"
@@ -162,9 +262,14 @@ EOF
 
 if [[ "$BIND" == "0.0.0.0" ]]; then
     cat <<EOF
-The UI will be on http://<this-host>:$PORT/ — bound to every interface, so anything on your LAN
-reaches the login page and the password is the only barrier in front of a tool that can rewrite
-this machine's routing. Re-run with BIND=127.0.0.1 if you would rather use an SSH tunnel.
+The UI will be on http://<this-host>:$PORT/ — bound to every interface, but only these sources
+are allowed to reach it:
+
+  $ALLOW_FROM
+
+Anything else, including the network at the far end of the VPN, gets a 403 before the login form.
+Re-run with BIND=127.0.0.1 if you would rather use an SSH tunnel, or ALLOW_FROM=... to change the
+list.
 EOF
 else
     cat <<EOF

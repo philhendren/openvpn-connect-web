@@ -16,3 +16,8 @@ webapp.env.bak-*
 # username, none of which belong in a public repository.
 CLAUDE.md
 .claude/
+
+# coverage output
+.coverage
+coverage.xml
+htmlcov/

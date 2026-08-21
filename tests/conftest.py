@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app import create_app
+from app import auth, create_app
 from app.auth import hash_password
 from app.config import Config
 from app.db import open_migrated
@@ -19,6 +19,25 @@ from app.services.openvpn import OpenVpnController, VpnStatus
 from app.services.routing import Route
 
 PASSWORD = "correct-horse-battery-staple"
+
+
+#: scrypt is deliberately expensive, and this suite pays that price constantly: most fixtures hash
+#: a login password and unlock a vault, so the production parameters cost roughly a tenth of a
+#: second per test and around a minute across the run -- all of it spent proving that a key
+#: derivation function is slow, which is not what any of these tests are about.
+#:
+#: So the whole session runs with cheap parameters. Nothing about correctness changes: scrypt
+#: derives the same *shape* of key either way, and the tests that matter here are about which key
+#: is used and when. The production values live beside these as ``*_PRODUCTION`` constants that
+#: nothing patches, and ``test_vault.py`` asserts they have not moved -- so this shortcut cannot
+#: leak into a real install without failing the suite.
+@pytest.fixture(scope="session", autouse=True)
+def cheap_key_derivation():
+    """Run the suite with scrypt parameters chosen for speed, not for resisting an attacker."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(vault, "SCRYPT_N", 2**10)
+        patch.setattr(auth, "PASSWORD_HASH_METHOD", "scrypt:1024:8:1")
+        yield
 
 
 def wait_for(predicate, timeout: float = 3.0, interval: float = 0.01) -> bool:

@@ -1,5 +1,7 @@
 # OpenVPN Connect
 
+[![tests](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml/badge.svg)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
+
 A small Flask control panel for the OpenVPN client on **one machine**. Start and stop the tunnel,
 watch its state and traffic, see what it actually routes and resolves — from a web page you can
 open on another device. It runs as a systemd service and needs root for exactly one operation.
@@ -33,7 +35,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-What I would say in its defence: the tests are real (500+, and they never touch the real system —
+What I would say in its defence: the tests are real (581, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout), the privilege boundary is
 narrow and deliberate (one root helper, a fixed set of verbs, no caller-supplied paths or content
 crossing into root), and several of the bugs found along the way were the kind that hide from
@@ -72,27 +74,87 @@ code. Nothing is passed on the openvpn command line to force one or the other.
 
 ## Requirements
 
-- **Linux with systemd** — the service is a systemd unit and the root helper uses `systemctl`.
-- **OpenVPN 2.5+** — `openvpn` on `PATH`, or set `OPENVPN=/path/to/openvpn` when installing.
-- **`sudo`** — for the install, and for the one root operation at runtime.
+- **Linux with systemd.** The app installs a systemd unit, and the root helper and the DNS report
+  both call `systemctl` / `resolvectl`.
+- **OpenVPN 2.5+** — `openvpn` on `PATH`, or `OPENVPN=/path/to/openvpn` when installing. 2.6+ is
+  what the [DNS](#dns) section describes, because that is where the client started configuring
+  systemd-resolved itself.
+- **`sudo`**, for the install and for the one root operation at runtime.
+- **`iproute2`** (`ip`) — the Routes and Tunnel scope panels read the kernel's tables with it.
+- **`whois`** — optional. Without it the routes table still lists every route, just with no owner
+  names beside the public ones.
+- **dnsmasq** — optional, and only the DNS rules panel uses it. Without it everything else works
+  and applying a rule reports that dnsmasq is not running rather than failing.
 - **[uv](https://docs.astral.sh/uv/)** — Python is managed entirely by uv; there is no
-  `requirements.txt` and no virtualenv to make by hand. Install it as **the user who will run the
-  app**, not as root:
+  `requirements.txt` and no virtualenv to make by hand.
 
-  ```bash
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  # then restart your shell, or: source $HOME/.local/bin/env
-  uv --version
-  ```
+### Installing them
 
-  `install.sh` looks up uv as that user and refuses to continue without it. If you installed it
-  somewhere unusual, pass the path: `sudo UV=/opt/uv/bin/uv ./deploy/install.sh`.
-- **dnsmasq** — optional, only for the DNS panel. Without it everything else works and applying a
-  DNS rule reports that dnsmasq is not running.
+There is a script that does all of this for the distribution you are on:
+
+```bash
+./install_prerequisites.sh            # asks before installing dnsmasq
+./install_prerequisites.sh --check    # report what is missing, install nothing
+./install_prerequisites.sh -y --with-dnsmasq
+```
+
+Run it **as yourself, not with sudo** — it elevates the package installs individually, and uv has
+to belong to the account the service will run as. It handles Debian/Ubuntu, the Fedora/RHEL family
+and Arch, checks each optional package against the repositories before asking for it (Ubuntu and
+Fedora split `systemd-resolved` out of systemd; Arch does not), and finishes by reporting what the
+machine can actually do rather than trusting the package manager's exit status.
+
+To do it by hand instead:
+
+**Ubuntu / Debian**
+
+```bash
+sudo apt update
+sudo apt install openvpn iproute2 whois curl ca-certificates
+sudo apt install systemd-resolved      # separate package on Ubuntu 24.04+; already there on older
+sudo apt install dnsmasq               # optional, only for the DNS rules panel
+```
+
+**Fedora / RHEL family**
+
+```bash
+sudo dnf install openvpn iproute whois curl ca-certificates
+sudo dnf install systemd-resolved      # separate package on recent Fedora
+sudo dnf install dnsmasq               # optional
+```
+
+**Arch**
+
+```bash
+sudo pacman -S --needed openvpn iproute2 whois curl ca-certificates
+sudo pacman -S dnsmasq                 # optional
+# systemd-resolved is part of the systemd package here
+```
+
+**uv, on any of them** — install it as **the user who will run the app**, never as root:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# then restart your shell, or: source $HOME/.local/bin/env
+uv --version
+```
+
+`install.sh` looks up uv as that user and refuses to continue without it. If you installed it
+somewhere unusual, pass the path: `sudo UV=/opt/uv/bin/uv ./deploy/install.sh`.
+
+### If you install dnsmasq
+
+On a machine already running systemd-resolved, both want port 53. The arrangement this expects is
+dnsmasq on `127.0.0.1` with resolved forwarding to it — typically `listen-address=127.0.0.1` plus
+`bind-interfaces` for dnsmasq, and `DNS=127.0.0.1` for resolved. If dnsmasq will not start after
+installing, that conflict is almost always why. The app never edits `/etc/dnsmasq.conf` or
+resolved's configuration; it owns exactly one file, `/etc/dnsmasq.d/vpn-connect.conf`.
 
 ## Install
 
 ```bash
+./install_prerequisites.sh     # openvpn, iproute2, whois, uv — see Requirements above
+
 mkdir -p ~/.vpn                # must exist before installing; see below
 uv sync
 
@@ -102,16 +164,22 @@ uv run flask --app app set-password >> ~/.vpn/webapp.env    # sets the web login
 sudo systemctl enable --now vpn-connect
 ```
 
-The installer asks one question — which address to listen on — and defaults to localhost. Setting
-`BIND` in the environment answers it in advance and skips the prompt entirely, which is what makes
-unattended installs work:
+The installer asks which address to listen on, and defaults to localhost. If you choose anything
+wider it asks a second question — which source addresses may actually connect — and proposes a list
+based on what it finds on the machine. Setting `BIND` and `ALLOW_FROM` in the environment answers
+both in advance and skips the prompts entirely, which is what makes unattended installs work:
 
 ```bash
 sudo BIND=0.0.0.0 PORT=5000 ./deploy/install.sh
+sudo BIND=0.0.0.0 ALLOW_FROM=127.0.0.0/8,192.168.4.0/22 ./deploy/install.sh   # fully scripted
 ```
 
 On a re-run the address already in the installed unit becomes the default, so pressing enter never
-silently takes away access you had already set up.
+silently takes away access you had already set up. The same goes for the allowlist, which is read
+back out of `webapp.env` and rewritten in place on every run.
+
+See [the allowlist](#the-allowlist) for why the second question exists — the short version is that
+`0.0.0.0` includes the VPN interface.
 
 `install.sh` puts three things on the system, and nothing else:
 
@@ -154,21 +222,88 @@ The default is `127.0.0.1`, reachable only from the machine itself:
 ssh -L 5000:localhost:5000 <host>     # then open http://localhost:5000/
 ```
 
-Choosing `0.0.0.0` at install time puts the login page on every interface, so anything on your LAN
-can reach it — and this panel can rewrite the machine's routing and DNS, which makes the login
-password the only barrier in front of a root-equivalent tool. That is a real trade-off for being able
-to open it on your phone; make it deliberately. Mitigations in place: scrypt-hashed password,
-signed session cookie, per-IP lockout after 5 failures, CSRF on every state change, `POST`-only
-state changes, and a restrictive CSP.
+Choosing `0.0.0.0` at install time puts the login page on every interface — and this panel can
+rewrite the machine's routing and DNS, which makes the login password the only barrier in front of
+a root-equivalent tool. Mitigations in place: scrypt-hashed password, signed session cookie,
+per-IP lockout after 5 failures, CSRF on every state change, `POST`-only state changes, and a
+restrictive CSP.
 
-A middle option, if you run [Tailscale](https://tailscale.com/) or similar: bind the tailnet
-address instead of `0.0.0.0`, and only your own devices can reach it, from anywhere.
+### The allowlist
 
-```bash
-sudo BIND=100.64.0.5 PORT=5000 ./deploy/install.sh    # your tailnet IP
+**Every interface includes `tun0`.** While the VPN is up, binding `0.0.0.0` means the network at
+the far end of the tunnel can reach your control panel — which is almost certainly not what you
+wanted from "let me open it on my phone". So the app checks every request's source address before
+authentication, and refuses anything not on a list you set:
+
+```
+VPN_CONNECT_ALLOW_FROM='127.0.0.0/8,192.168.4.0/22,100.64.0.0/10'
 ```
 
-There is no TLS, so leave `VPN_CONNECT_COOKIE_SECURE` off unless you put a reverse proxy in front.
+The installer proposes this list for you when you choose a non-loopback bind: loopback, the subnet
+behind your default route, and `100.64.0.0/10` if a `tailscale0` interface exists. Press enter to
+accept it or type your own. Bare addresses become `/32`, and host bits are tolerated — pasting
+`192.168.4.46/22` straight out of `ip addr` gives you `192.168.4.0/22`.
+
+Note that this cannot be a "block private addresses" rule: a `tun0` address is RFC1918 too, exactly
+like your LAN. Only you know which private network is yours, so the list is explicit or nothing.
+
+Two consequences worth knowing:
+
+- **Unset means loopback only.** The list fails closed, so if you widen `BIND` without widening
+  this you will get a 403 rather than a login page. The 403 says so, and re-running the installer
+  fixes it.
+- **A malformed entry stops the app from starting**, naming the bad token. Skipping it silently
+  would either lock you out or leave the list wider than the file says.
+
+### Tailscale
+
+If you run [Tailscale](https://tailscale.com/), `100.64.0.0/10` in the allowlist gets you your own
+devices from anywhere. With HTTPS Certificates enabled on your tailnet you can also have a real
+Let's Encrypt certificate with no open ports and no DNS provider:
+
+```bash
+sudo tailscale serve --bg --https=443 http://127.0.0.1:5000
+sudo TRUSTED_PROXIES=127.0.0.0/8 ./deploy/install.sh    # see below
+sudo systemctl restart vpn-connect
+```
+
+Do **not** use `tailscale funnel` for this — that publishes the panel to the open internet.
+
+### Behind a reverse proxy
+
+Anything fronting the app — `tailscale serve`, Caddy, nginx — makes every request arrive from
+`127.0.0.1`, so the per-IP login lockout stops distinguishing devices: five fumbled attempts on a
+phone would lock out the laptop too. `VPN_CONNECT_TRUSTED_PROXIES` fixes that by naming the peers
+whose `X-Forwarded-For` may be believed:
+
+```
+VPN_CONNECT_TRUSTED_PROXIES='127.0.0.0/8'
+```
+
+Empty by default, which means no forwarded header is read at all — with nothing in front of the
+app, `X-Forwarded-For` is just a header a client made up.
+
+Two things this deliberately does *not* do:
+
+- **It never affects the allowlist.** Who may connect is always decided on the real socket peer,
+  so a forwarded header cannot open the gate. The two questions — "may you connect?" and "who
+  are you?" — get different answers from different sources, which is why the app doesn't use
+  Werkzeug's `ProxyFix` (it would rewrite `REMOTE_ADDR` for both).
+- **It reads the chain right to left.** A proxy *appends*, so in `1.2.3.4, 100.64.0.9` only the
+  right-hand entry was observed by your proxy and the left is whatever the client sent. Trusting
+  the leftmost is the standard way to let an attacker pick a fresh identity per request and never
+  hit the lockout at all.
+
+To check it is working, fail a login on purpose and look at the log — it records the address the
+request was attributed to:
+
+```bash
+journalctl -u vpn-connect -f | grep 'failed login'
+```
+
+There is otherwise no TLS, so leave `VPN_CONNECT_COOKIE_SECURE` off unless you put a reverse proxy
+in front. Never port-forward this from your router: use the SSH tunnel, a tailnet, or a reverse
+proxy you control.
 
 ## Configuration
 
@@ -178,6 +313,8 @@ Everything is `VPN_CONNECT_*` environment variables, read at startup from `~/.vp
 | --- | --- | --- |
 | `SECRET_KEY` | random per boot | session signing; set it, or sessions drop on restart |
 | `PASSWORD_HASH` | *(unset)* | web login; without it the app shows a setup page |
+| `ALLOW_FROM` | *(unset — loopback only)* | comma-separated CIDRs allowed to connect at all, checked before login |
+| `TRUSTED_PROXIES` | *(unset — trust nothing)* | CIDRs whose `X-Forwarded-For` names the real client, for the login throttle only |
 | `VPN_DIR` | `~/.vpn` | the state directory described above |
 | `DATABASE` | `~/.vpn/vpn-connect.db` | connections, DNS rules, history, notification settings |
 | `ENV_FILE` | `~/.vpn/webapp.env` | this file; read only so the deployment check can spot damage in it |
@@ -254,7 +391,7 @@ is writable.
 
 Above the rules, the panel says which resolver answers a lookup right now. This is not cosmetic:
 **OpenVPN 2.6+ applies pushed `dhcp-option DNS` itself, over D-Bus to systemd-resolved**, with no
-`--up` script involved — so a client that runs no external scripts at all (see Notifications) can
+`--up` script involved — so a client that runs no external scripts at all (this one does not) can
 still have DNS taken away from it entirely. When the server pushes a catch-all, resolved gets a
 `~.` route-only domain on `tun0` and *every* lookup goes over the tunnel, dnsmasq included. The
 same rules that are load-bearing on an older client are then dead weight, and nothing about a rule
@@ -311,12 +448,13 @@ you asked for and a connection that was cut are not the same news:
 | You pressed Disconnect | `VPN disconnected` | default |
 | It dropped on its own | `VPN dropped` | **high** |
 
-Telling the last two apart is only possible inside the app. OpenVPN's own `--down` script fires
-identically whether the client was asked to stop or the server cut it off, so the earlier
-hook-based version needed a marker file on disk to carry that fact across. The controller knows
-directly — `disconnect()` sets a flag — so sending moved into `app/services/notifications.py` and
-the marker went away. As a consequence **OpenVPN runs no external script at all**: the helper no
-longer passes `--script-security`, `--up` or `--down`.
+Telling the last two apart is only possible inside the app. OpenVPN's own `--down` fires
+identically whether the client was asked to stop or the server cut it off, so nothing outside the
+process can distinguish them; the controller can, because `disconnect()` sets a flag in memory
+before it signals the tunnel. Sending lives in `app/services/notifications.py` over stdlib
+`urllib`, and **OpenVPN runs no external script at all** — the helper passes no
+`--script-security`, `--up` or `--down`, so there is nothing on disk for a notification to go
+wrong in.
 
 Notifications never affect the tunnel. Each one is sent fire-and-forget on its own thread with a
 short timeout, and failures are logged rather than raised — losing a push is an annoyance, failing
@@ -335,8 +473,8 @@ brace.
 ## Look and feel
 
 Bootstrap 5.3 and the OpenVPN mark are **vendored** into `app/static/vendor/` and
-`app/static/img/` — nothing is fetched from a CDN at runtime, which is what lets the CSP stay
-`'self'`. The palette is OpenVPN orange on warm graphite neutrals, defined as CSS custom properties
+`app/static/img/` — no CDN serves this page any script or stylesheet, which is what lets the CSP
+keep `default-src 'self'` with Google Fonts as its only exception. The palette is OpenVPN orange on warm graphite neutrals, defined as CSS custom properties
 in `app/static/css/app.css`; tunnel status has its own green/blue/red/amber scale so "in progress"
 never blends into the brand colour. Light and dark are driven by `[data-bs-theme]`, which
 `static/js/theme.js` sets before first paint from `localStorage` or the OS preference, and the
@@ -349,17 +487,51 @@ A tunnel started outside the app — by hand, or by a shell script with a TCP ma
 can see the pid and the tun address, and can stop it, but cannot read its state or its log. Stop it
 and reconnect from the UI to get full control. Use one or the other for a given session.
 
+## Is what is running what you edited?
+
+A banner at the top of the page appears when the deployment has drifted from the checkout it runs
+from, because that question has a habit of being answered wrongly:
+
+- **The helper.** `install.sh` renders `deploy/vpn-connect-helper.in` into `/usr/local/sbin` and
+  stamps it with the template's sha256. Editing the template changes nothing until you re-run the
+  installer, and the failure that follows is a puzzle — an unknown verb, a flag no longer passed —
+  rather than a message.
+- **The Python.** Jinja templates reload on edit; the modules behind them do not. A page can show
+  new markup driven by code that never reloaded. Any `.py` edited after the process started is
+  reported; templates are deliberately not.
+- **The database.** Schema version behind the migrations on disk. Migrations run at start-up, so a
+  restart is the whole fix.
+- **`webapp.env`.** Repeated keys and lines that are not settings at all. The documented way to set
+  a password *appends a command's output* to that file, and systemd takes the last value of a
+  repeated key and skips anything it cannot parse — both silently, so a damaged file behaves almost
+  correctly.
+
+It is advice and nothing more: every fix it names (`sudo ./deploy/install.sh`,
+`sudo systemctl restart vpn-connect`, editing the env file) needs a privilege the app deliberately
+does not have.
+
 ## Development
 
 ```bash
 uv run flask --app app run --debug --port 5000     # localhost dev server
-uv run pytest
+uv run pytest                                      # ~9s
+uv run pytest --cov=app                            # with coverage; fails under 90%
 uv run ruff check . && uv run ruff format .
 ```
 
 Tests never touch the real system: `subprocess.run` and the management client are both injected into
 `OpenVpnController`, and the argv assertions in `tests/test_openvpn.py` are the standing defence
 against command-injection regressions.
+
+Every push and pull request runs the suite on Python 3.12 and 3.13, plus ruff and a syntax check of
+the shell that makes up the privilege boundary. Coverage (currently ~93%, branch coverage included)
+is reported in the run summary and uploaded as an artifact; the 90% floor lives in `pyproject.toml`,
+so CI fails on the same number you do locally.
+
+The suite runs with **deliberately cheap scrypt parameters** — at production cost the fixtures spend
+about a minute deriving keys nobody looks at. `SCRYPT_N_PRODUCTION` and
+`PASSWORD_HASH_METHOD_PRODUCTION` are what a real install uses, and `tests/test_vault.py` loads an
+unpatched copy of each module to assert they have not been weakened.
 
 ## Licence
 
