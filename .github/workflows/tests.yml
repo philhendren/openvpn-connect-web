@@ -42,6 +42,11 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          # Without a suffix every job derives the same cache key and they race to save it, which
+          # the runner reports as "Unable to reserve cache ... another job may be creating this
+          # cache". Harmless, but it is a warning on every run, and a warning nobody acts on is
+          # one nobody reads.
+          cache-suffix: py${{ matrix.python-version }}
 
       # --frozen throughout: uv.lock is committed, so CI must fail on a lockfile that no longer
       # matches pyproject.toml rather than quietly resolving something newer and testing that.
@@ -56,14 +61,19 @@ jobs:
 
       # One version's report is enough -- the two legs cover the same lines, and two summaries on
       # a run would just be noise.
+      # Three places, because they are read by different people at different times: a notice on
+      # the run page (visible without opening anything), the job log (where someone debugging a
+      # failure already is), and the run summary (which survives as the record of the run).
       - name: Coverage summary
         if: matrix.python-version == '3.13'
         run: |
+          total="$(uv run --frozen coverage report --format=total --precision=1)"
+          echo "::notice title=Coverage::Total coverage ${total}%"
           {
-            echo "## Coverage"
+            echo "## Coverage: ${total}%"
             echo
             uv run --frozen coverage report --format=markdown
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload coverage report
         if: matrix.python-version == '3.13'
@@ -83,6 +93,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
+          cache-suffix: lint   # its own key, for the reason given in the test job
 
       - name: Install dependencies
         run: uv sync --frozen
