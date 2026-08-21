@@ -6,10 +6,12 @@
 
 name: tests
 
+# Both triggers on purpose. `push` is what makes a branch go green before anyone opens anything;
+# `pull_request` is what covers PRs from forks, whose pushes never reach this repository. The cost
+# is that a PR from a branch *in* this repo runs twice, which is the usual trade and cheap here.
 on:
-  pull_request:
   push:
-    branches: [main]
+  pull_request:
 
 # A second push to a PR makes the first run irrelevant.
 concurrency:
