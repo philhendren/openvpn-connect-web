@@ -196,7 +196,7 @@ not to root. Nothing here is edited by hand.
 
 | File | Mode | Written by | What it is |
 | --- | --- | --- | --- |
-| `vpn-connect.db` | 0600 | the app | **Everything.** Connections and their encrypted profile, username and password; DNS rules; connection history; traffic samples. `-wal` and `-shm` alongside it are SQLite's own and come and go. |
+| `vpn-connect.db` | 0600 | the app | **Everything.** Connections and their encrypted profile, username and password; DNS rules; connection history and per-attempt logs (kept for seven days); traffic samples. `-wal` and `-shm` alongside it are SQLite's own and come and go. |
 | `webapp.env` | 0600 | `install.sh`, then you | The `VPN_CONNECT_*` settings systemd loads: Flask secret, login password hash, paths. |
 | `<name>.ovpn` | 0600 | the app | A **derived** file, rewritten from the database every time you save or connect. Root reads it to start the tunnel. Editing it achieves nothing — re-save the connection instead. |
 | `dns-staged.conf` | 0644 | the app | Rendered dnsmasq rules, staged for the root helper to validate and install. Overwritten on every DNS change. |
@@ -329,6 +329,66 @@ Everything is `VPN_CONNECT_*` environment variables, read at startup from `~/.vp
 | `LOGIN_MAX_ATTEMPTS` / `LOGIN_LOCKOUT_SECONDS` | `5` / `300` | login throttle |
 | `DNS_LEGACY_CONF` | *(unset)* | a hand-maintained dnsmasq file the DNS panel offers to import, then retires |
 | `DNS_STAGING` | `~/.vpn/dns-staged.conf` | where rendered DNS rules are written for the root helper to pick up |
+
+## Session history
+
+The **Session history** card answers the question a status page cannot: *does this tunnel actually
+stay up?* It lists the last **seven days** of connection attempts, newest first, with what each one
+did — when it started, how long it was connected, how it ended, and how much it carried.
+
+The distinction the card exists for is between the ways an attempt can end:
+
+| Shown as | What happened |
+| --- | --- |
+| **Dropped** | the tunnel was up and the link was lost — nobody asked for that |
+| **You disconnected** | the tunnel was up and you pressed Disconnect |
+| **Failed** | the attempt never came up at all — a rejected credential, a mistyped code, no route to the server |
+| **Interrupted** | the app stopped while the tunnel was up, so the attempt was never closed |
+| **Live** | the attempt running right now |
+
+Those are recorded when they happen rather than worked out afterwards. OpenVPN's own hooks fire
+identically whether you asked it to stop or the concentrator cut you off, so the only place that
+knows the difference is the controller — the same knowledge that picks between the two "tunnel
+down" notifications. It is now written to the session row as well, along with the moment the tunnel
+came up, because nothing left in the row can answer either question once the process is gone.
+
+Above the table are the totals for the whole window: sessions, time connected, longest and typical
+session, drops (with how many of them were yours), and bytes carried. Time connected counts only
+attempts that actually came up — folding a fifteen-second failed login into a median uptime drags
+the answer towards zero every time a code is mistyped. The totals always describe the whole window,
+never the current search: "three drops" means nothing without three out of how many.
+
+**Searching is by session, not by date.** The box matches a session number, a connection name, or
+how the session ended (`dropped`, `failed`, `work dropped`), and the table pages with **Show older
+sessions** rather than a date picker. That is a deliberate choice: this is a machine that gets
+switched off, and a date range covering two days it spent asleep answers a reasonable question with
+an empty table and no explanation. Selecting a row opens the log that attempt left behind, fetched
+only when you ask for it.
+
+### What "seven days" means
+
+Retention is by age, and a session is kept **whole**:
+
+- Anything that **ended** before the cutoff is deleted — rows, log lines and traffic samples
+  together, via `ON DELETE CASCADE`.
+- A session that **started** before the cutoff but ended inside the window is kept back to its
+  beginning. An eight-day-old row is therefore normal and correct; truncating it at the boundary
+  would report a long tunnel as a short one. The card says how far back it actually reaches.
+- A session **still running** is never swept, however long it has been up.
+
+The sweep runs when a new attempt starts, so on a machine that has not connected for a fortnight
+the old rows are still on disk — which is why the same window is applied again when the history is
+read. Nothing older is shown, and nothing older survives the next connect. A count cap
+(`KEEP_SESSIONS` in `app/services/store.py`, alongside `RETENTION_DAYS`) is the only other limit,
+and exists solely so a reconnect loop cannot fill the disk in less than a week.
+
+The history stores no credentials: a session row is a number, a connection name, timestamps, an
+outcome and two byte counters. The log lines it keeps are OpenVPN's own, with credential chatter
+redacted before it is ever written.
+
+Served by `GET /api/sessions`, off the polled status endpoint like the routes table, and refetched
+when the tunnel changes state — which is exactly when a session begins or ends. The panel starts
+collapsed, like every other panel below the connect form.
 
 ## Routes
 

@@ -55,6 +55,12 @@
   const dnsFallbackBody = document.getElementById("dns-fallback-body");
   const dnsFallbackForm = document.getElementById("dns-fallback-form");
   const dnsFeedback = document.getElementById("dns-feedback");
+  const sessionsBody = document.getElementById("sessions-body");
+  const sessionsSearch = document.getElementById("sessions-search");
+  const sessionsRefresh = document.getElementById("sessions-refresh");
+  const sessionsMore = document.getElementById("sessions-more");
+  const sessionsMatched = document.getElementById("sessions-matched");
+  const sessionsHeadline = document.getElementById("sessions-headline");
 
   const IDLE_POLL = 5000;
   const BUSY_POLL = 1000;
@@ -67,6 +73,9 @@
   const whoisOrgs = {};     // destination -> org string | null (looked up, no name found)
   const whoisPending = new Set();   // destinations currently being resolved
   const whoisFailed = new Set();    // destinations whose last lookup errored -- retried next time
+  let sessionsCursor = null;        // id to page before; null once the last page has been shown
+  let sessionsSearchTimer = null;
+  let sessionsOpenLog = null;       // the session whose log is expanded, if any
 
   const text = (id, value) => {
     const el = document.getElementById(id);
@@ -370,6 +379,13 @@
     loadRoutes();
     loadScope();   // the verdict changes exactly when the routes behind it do
     loadDnsStatus();   // and so does who resolves what: OpenVPN configures DNS as the tunnel comes up
+    /* A connect or a drop is precisely when a session begins or ends, so the history is
+       refreshed on the same signal rather than on a timer of its own -- and only if somebody
+       has the panel open to see it. */
+    if (sessionsPanel && sessionsPanel.classList.contains("show")) {
+      sessionsCursor = null;
+      loadSessions();
+    }
   }
 
   /* --- tunnel scope -----------------------------------------------------
@@ -1091,6 +1107,261 @@
     });
   }
 
+  /* --- session history --------------------------------------------------
+     A week of connection attempts. Searched and paged by *session* rather than by date: the
+     question is "how has this tunnel behaved", which is asked in attempts, and a date range on
+     a machine that spent two of those days switched off answers it with an empty table. */
+
+  const SESSION_KINDS = {
+    live:         { label: "Live",              tone: "busy" },
+    dropped:      { label: "Dropped",           tone: "bad"  },
+    disconnected: { label: "You disconnected",  tone: "idle" },
+    failed:       { label: "Failed",            tone: "bad"  },
+    interrupted:  { label: "Interrupted",       tone: "warn" },
+    ended:        { label: "Ended",             tone: "idle" },
+  };
+
+  const when = (iso) => {
+    if (!iso) return "—";
+    const at = new Date(iso);
+    if (Number.isNaN(at.valueOf())) return iso;
+    return at.toLocaleString(undefined, {
+      day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+    });
+  };
+
+  const sessionsEmptyRow = (message) => {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.className = "text-body-secondary";
+    td.textContent = message;
+    tr.append(td);
+    return tr;
+  };
+
+  function sessionRow(session) {
+    const kind = SESSION_KINDS[session.kind] || { label: session.kind || "—", tone: "idle" };
+    const tr = document.createElement("tr");
+    tr.className = "session-row";
+    tr.tabIndex = 0;
+    tr.dataset.session = session.id;
+    tr.setAttribute("aria-label", `Session ${session.id}: ${kind.label}. Select to read its log.`);
+
+    const id = document.createElement("td");
+    id.className = "dst";
+    const number = document.createElement("span");
+    number.className = "session-id";
+    number.textContent = `#${session.id}`;
+    id.append(number);
+    if (session.connection) {
+      const name = document.createElement("span");
+      name.className = "session-name";
+      name.textContent = session.connection;
+      id.append(name);
+    }
+
+    const started = document.createElement("td");
+    started.textContent = when(session.started_at);
+
+    const up = document.createElement("td");
+    /* Time *connected*, not time spent attempting: an attempt that never came up did not have
+       a tunnel for any length of time, and reporting its fifteen seconds here would put it in
+       the same column as a nine-hour session. */
+    up.textContent = session.connected ? duration(Math.round(session.up_seconds || 0)) : "—";
+    if (!session.connected) up.className = "muted";
+
+    const ended = document.createElement("td");
+    const pill = document.createElement("span");
+    pill.className = "badge session-kind";
+    pill.dataset.tone = kind.tone;
+    pill.textContent = kind.label;
+    ended.append(pill);
+    if (session.ended_at) {
+      const at = document.createElement("span");
+      at.className = "session-when muted";
+      at.textContent = when(session.ended_at);
+      ended.append(at);
+    }
+
+    const carried = document.createElement("td");
+    carried.className = "text-end";
+    carried.textContent = session.bytes_in || session.bytes_out
+      ? `${bytes(session.bytes_in)} ↓ · ${bytes(session.bytes_out)} ↑`
+      : "—";
+    if (!session.bytes_in && !session.bytes_out) carried.classList.add("muted");
+
+    tr.append(id, started, up, ended, carried);
+    return tr;
+  }
+
+  const renderSummary = (payload) => {
+    const summary = payload.summary || {};
+    text("sessions-count", summary.sessions ? String(summary.sessions) : "0");
+    text("sessions-uptime", summary.sessions ? duration(Math.round(summary.up_seconds || 0)) : "—");
+    text("sessions-longest", summary.connected ? duration(Math.round(summary.longest_up_seconds || 0)) : "—");
+    text("sessions-median", summary.connected ? duration(Math.round(summary.median_up_seconds || 0)) : "—");
+    /* Drops and disconnects side by side, because the number only means something next to the
+       one it is not: "four drops, one of them yours" is a different week from "four drops". */
+    text("sessions-drops", summary.sessions
+      ? `${summary.drops || 0} · ${summary.manual || 0} by you`
+      : "—");
+    text("sessions-bytes", summary.sessions
+      ? `${bytes(summary.bytes_in)} ↓ · ${bytes(summary.bytes_out)} ↑`
+      : "—");
+    text("sessions-window", String(payload.window_days || 7));
+
+    if (sessionsHeadline) {
+      sessionsHeadline.textContent = summary.sessions
+        ? `${summary.sessions} session${summary.sessions === 1 ? "" : "s"} · ${summary.drops || 0} dropped`
+        : "No sessions yet";
+    }
+  };
+
+  const renderMatched = (payload) => {
+    if (!sessionsMatched) return;
+    if (!payload.query) {
+      sessionsMatched.textContent = "";
+      return;
+    }
+    sessionsMatched.textContent = `${payload.matched} of ${payload.retained} sessions match`;
+  };
+
+  async function loadSessions({ append = false } = {}) {
+    if (!sessionsBody) return;
+    const query = sessionsSearch ? sessionsSearch.value.trim() : "";
+    const params = new URLSearchParams();
+    if (query) params.set("q", query);
+    if (append && sessionsCursor !== null) params.set("before", sessionsCursor);
+
+    let payload;
+    try {
+      payload = await api(`/api/sessions?${params.toString()}`);
+    } catch (err) {
+      if (!append) sessionsBody.replaceChildren(sessionsEmptyRow(`Could not read the history: ${err.message}`));
+      return;
+    }
+
+    const rows = (payload.sessions || []).map(sessionRow);
+    if (append) {
+      sessionsBody.append(...rows);
+    } else {
+      sessionsOpenLog = null;   // the row it belonged to is being replaced
+      sessionsBody.replaceChildren(
+        ...(rows.length ? rows : [sessionsEmptyRow(
+          payload.retained
+            ? "No sessions match that search."
+            : "No connection attempts recorded yet."
+        )])
+      );
+    }
+
+    sessionsCursor = payload.next === undefined ? null : payload.next;
+    if (sessionsMore) sessionsMore.hidden = sessionsCursor === null;
+    renderSummary(payload);
+    renderMatched(payload);
+  }
+
+  /* The log a session left behind, fetched only when a row is opened: a week of attempts is a
+     week of logs, and sending them all so that one might be read would be the same mistake as
+     resolving every whois before the routes table renders. */
+  async function toggleSessionLog(row) {
+    const id = Number(row.dataset.session);
+    const existing = row.nextElementSibling;
+    if (existing && existing.classList.contains("session-log-row")) {
+      existing.remove();
+      row.classList.remove("session-open");
+      sessionsOpenLog = null;
+      return;
+    }
+    if (sessionsOpenLog !== null) {
+      const open = sessionsBody.querySelector(".session-log-row");
+      if (open) open.remove();
+      sessionsBody.querySelectorAll(".session-open").forEach((el) => el.classList.remove("session-open"));
+    }
+
+    const tr = document.createElement("tr");
+    tr.className = "session-log-row";
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    const pre = document.createElement("pre");
+    pre.className = "code session-log mb-0";
+    pre.textContent = "Loading log…";
+    td.append(pre);
+    tr.append(td);
+    row.after(tr);
+    row.classList.add("session-open");
+    sessionsOpenLog = id;
+
+    try {
+      const payload = await api(`/api/logs?session=${id}`);
+      const lines = payload.lines || [];
+      pre.textContent = lines.length ? lines.join("\n") : "This attempt logged nothing.";
+    } catch (err) {
+      pre.textContent = `Could not read the log: ${err.message}`;
+    }
+  }
+
+  if (sessionsBody) {
+    const openRow = (event) => {
+      const row = event.target.closest(".session-row");
+      if (row) toggleSessionLog(row);
+    };
+    sessionsBody.addEventListener("click", openRow);
+    sessionsBody.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const row = event.target.closest(".session-row");
+      if (!row) return;
+      event.preventDefault();   // space would scroll the panel out from under the row
+      toggleSessionLog(row);
+    });
+  }
+
+  if (sessionsSearch) {
+    /* Debounced, and always from the first page: a search that kept the old cursor would page
+       "before" a session that is no longer in the results. */
+    sessionsSearch.addEventListener("input", () => {
+      window.clearTimeout(sessionsSearchTimer);
+      sessionsSearchTimer = window.setTimeout(() => {
+        sessionsCursor = null;
+        loadSessions();
+      }, 200);
+    });
+  }
+
+  if (sessionsMore) {
+    sessionsMore.addEventListener("click", async () => {
+      sessionsMore.disabled = true;
+      try {
+        await loadSessions({ append: true });
+      } finally {
+        sessionsMore.disabled = false;
+      }
+    });
+  }
+
+  if (sessionsRefresh) {
+    sessionsRefresh.addEventListener("click", async () => {
+      sessionsRefresh.disabled = true;
+      try {
+        sessionsCursor = null;
+        await loadSessions();
+      } finally {
+        sessionsRefresh.disabled = false;
+      }
+    });
+  }
+
+  const sessionsPanel = document.getElementById("panel-sessions");
+  if (sessionsPanel) {
+    sessionsPanel.addEventListener("shown.bs.collapse", (e) => {
+      if (e.target === sessionsPanel) {
+        sessionsCursor = null;
+        loadSessions();
+      }
+    });
+  }
+
   /* Panels remember whether you left them open. Worth doing rather than relying on the markup
      default: saving a connection reloads the page, which would otherwise shut everything you
      had opened. A panel marked data-panel-locked keeps the server's choice -- that is the
@@ -1133,6 +1404,7 @@
         if (panel === trafficPanel) pollTraffic(true);
         if (panel === scopePanel) loadScope();
         if (panel === dnsPanel) loadDns();
+        if (panel === sessionsPanel) loadSessions();
       }
       ["shown.bs.collapse", "hidden.bs.collapse"].forEach((event) => {
         panel.addEventListener(event, (e) => {

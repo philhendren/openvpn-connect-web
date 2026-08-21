@@ -656,6 +656,135 @@ def test_logs_require_login(client):
     assert client.get("/api/logs").status_code == 401
 
 
+# --- session history -------------------------------------------------------
+
+
+def _finished(history, connection="client", *, outcome="disconnected", reason="", up=True):
+    """One completed attempt, with or without ever having come up."""
+    history.start_session(connection)
+    session = history.session_id
+    if up:
+        history.mark_connected()
+    history.end_session(outcome, reason)
+    return session
+
+
+def test_session_history_requires_login(client):
+    assert client.get("/api/sessions").status_code == 401
+
+
+def test_an_empty_history_is_empty_not_an_error(auth_client):
+    payload = auth_client.get("/api/sessions").get_json()
+    assert payload["sessions"] == []
+    assert payload["summary"]["sessions"] == 0
+    assert payload["window_days"] == 7
+    assert payload["next"] is None
+
+
+def test_the_history_reports_how_each_session_ended(auth_client, history):
+    _finished(history, reason="link-lost")
+    _finished(history, reason="operator-requested")
+    _finished(history, outcome="failed", up=False)
+
+    rows = auth_client.get("/api/sessions").get_json()["sessions"]
+    assert [row["kind"] for row in rows] == ["failed", "disconnected", "dropped"]
+
+
+def test_the_attempt_running_now_is_marked_live(auth_client, history):
+    history.start_session("client")
+    history.mark_connected()
+    row = auth_client.get("/api/sessions").get_json()["sessions"][0]
+    assert (row["live"], row["kind"], row["ended_at"]) == (True, "live", None)
+
+
+def test_the_summary_counts_drops_separately_from_disconnects(auth_client, history):
+    _finished(history, reason="link-lost")
+    _finished(history, reason="link-lost")
+    _finished(history, reason="operator-requested")
+    _finished(history, outcome="failed", up=False)
+
+    summary = auth_client.get("/api/sessions").get_json()["summary"]
+    assert (summary["sessions"], summary["drops"], summary["manual"], summary["failed"]) == (
+        4,
+        2,
+        1,
+        1,
+    )
+
+
+def test_sessions_can_be_searched_by_connection(auth_client, history):
+    _finished(history, "work")
+    _finished(history, "home")
+    payload = auth_client.get("/api/sessions?q=work").get_json()
+    assert [row["connection"] for row in payload["sessions"]] == ["work"]
+    assert (payload["matched"], payload["retained"]) == (1, 2)
+
+
+def test_sessions_can_be_searched_by_how_they_ended(auth_client, history):
+    _finished(history, reason="link-lost")
+    _finished(history, reason="operator-requested")
+    rows = auth_client.get("/api/sessions?q=dropped").get_json()["sessions"]
+    assert [row["kind"] for row in rows] == ["dropped"]
+
+
+def test_a_search_that_matches_nothing_is_an_empty_page_not_an_error(auth_client, history):
+    _finished(history)
+    payload = auth_client.get("/api/sessions?q=nothing-like-this").get_json()
+    assert payload["sessions"] == []
+    assert payload["matched"] == 0
+
+
+def test_the_summary_covers_the_window_not_the_search(auth_client, history):
+    """ "One drop" means nothing without one out of how many, and a total that moved as you
+    typed would be worse than no total at all."""
+    _finished(history, "work", reason="link-lost")
+    _finished(history, "home", reason="operator-requested")
+    payload = auth_client.get("/api/sessions?q=work").get_json()
+    assert len(payload["sessions"]) == 1
+    assert payload["summary"]["sessions"] == 2
+
+
+def test_the_history_pages_by_session(auth_client, history):
+    ids = [_finished(history) for _ in range(5)]
+    first = auth_client.get("/api/sessions?limit=2").get_json()
+    assert [row["id"] for row in first["sessions"]] == ids[:-3:-1]
+    assert first["next"] == ids[-2]
+
+    second = auth_client.get(f"/api/sessions?limit=2&before={first['next']}").get_json()
+    assert [row["id"] for row in second["sessions"]] == ids[2:0:-1]
+
+
+def test_the_last_page_offers_no_cursor(auth_client, history):
+    _finished(history)
+    assert auth_client.get("/api/sessions?limit=25").get_json()["next"] is None
+
+
+def test_the_page_size_is_clamped(auth_client, history):
+    _finished(history)
+    assert auth_client.get("/api/sessions?limit=999999").status_code == 200
+    assert auth_client.get("/api/sessions?limit=-5").status_code == 200
+
+
+def test_a_session_carries_what_it_moved(auth_client, history):
+    history.start_session("client")
+    history.mark_connected()
+    history.record_sample(4096, 2048)
+    history.end_session("disconnected", "link-lost")
+
+    row = auth_client.get("/api/sessions").get_json()["sessions"][0]
+    assert (row["bytes_in"], row["bytes_out"]) == (4096, 2048)
+
+
+def test_the_page_has_a_session_history_panel_that_starts_collapsed(auth_client, stored_connection):
+    """Collapsed by default like every other panel below the fold: the history is something you
+    go and look at, not something that should push the connect form off the screen."""
+    body = auth_client.get("/").get_data(as_text=True)
+    assert 'class="collapse panel-body" id="panel-sessions"' in body
+    assert 'data-bs-target="#panel-sessions" aria-expanded="false"' in body
+    assert body.index('id="panel-traffic"') < body.index('id="panel-sessions"')
+    assert body.index('id="panel-sessions"') < body.index('id="panel-scope"')
+
+
 # --- a session that outlived the key ---------------------------------------
 
 

@@ -25,9 +25,20 @@ def _make_socket(config) -> None:
 
 
 def _start(controller, config, otp: str = "123456") -> FakeClient:
+    """Begin an attempt and wait for *its* management client to be primed.
+
+    The instance count matters: on a second attempt the previous client is still the latest one
+    and already carries "hold release", so waiting only for that phrase hands the test the old
+    client and lets it push events into an attempt that has not opened a socket yet.
+    """
     _make_socket(config)
+    started = len(FakeClient.instances)
     controller.connect("client", otp)
-    assert wait_for(lambda: FakeClient.instances and "hold release" in FakeClient.latest().commands)
+    assert wait_for(
+        lambda: (
+            len(FakeClient.instances) > started and "hold release" in FakeClient.latest().commands
+        )
+    )
     return FakeClient.latest()
 
 
@@ -523,3 +534,75 @@ def test_a_reattached_tunnel_gets_a_session_to_record_into(controller, config, h
     _make_socket(config)
     controller.attach()
     assert history.session_id is not None
+
+
+# --- what the history is told about an attempt ------------------------------
+#
+# The controller is the only place that knows whether a tunnel came up and why it went down --
+# OpenVPN's own hooks fire identically for a drop and for a requested stop. These tests are the
+# standing check that the verdict is *recorded*, not just used to pick a notification and then
+# thrown away.
+
+
+def _row(history, session_id: int) -> dict:
+    return next(row for row in history.sessions() if row["id"] == session_id)
+
+
+def test_a_tunnel_that_comes_up_is_recorded_as_having_come_up(controller, config, history):
+    _connect(controller, config)
+    assert _row(history, history.session_id)["connected_at"] is not None
+
+
+def test_an_attempt_that_never_came_up_records_no_connected_time(controller, config, history):
+    _start(controller, config)
+    session = history.session_id
+    controller._fail("Authentication rejected")
+    assert wait_for(lambda: controller.snapshot().state == FAILED)
+    assert _row(history, session)["connected_at"] is None
+
+
+def test_a_failed_attempt_closes_its_own_session(controller, config, history):
+    """It used to stay open until the *next* attempt closed it as "interrupted", which put no
+    end time on the one row somebody opens the history to read."""
+    _start(controller, config)
+    session = history.session_id
+    controller._fail("Authentication rejected")
+    assert wait_for(lambda: controller.snapshot().state == FAILED)
+
+    row = _row(history, session)
+    assert row["ended_at"] is not None
+    assert (row["outcome"], row["reason"]) == ("failed", "")
+
+
+def test_a_severed_tunnel_records_that_it_was_severed(controller, config, history):
+    client = _connect(controller, config)
+    session = history.session_id
+    client.emit("STATE", "1755600100,EXITING,exit-with-notification,,,,,")
+    assert wait_for(lambda: controller.snapshot().state == DISCONNECTED)
+    assert _row(history, session)["reason"] == "link-lost"
+
+
+def test_a_requested_disconnect_records_that_you_asked(controller, config, history):
+    """The same distinction the two down notifications turn on, kept for the week after."""
+    client = _connect(controller, config)
+    session = history.session_id
+    controller.disconnect()
+    client.emit("STATE", "1755600100,EXITING,exit-with-notification,,,,,")
+    assert wait_for(lambda: controller.snapshot().state == DISCONNECTED)
+    assert _row(history, session)["reason"] == "operator-requested"
+
+
+def test_a_superseded_worker_cannot_fail_the_attempt_that_replaced_it(
+    controller, config, history, connections
+):
+    """Reconnecting quickly leaves the previous worker alive for a moment. Its failure belongs
+    to a connection nobody is waiting for, and reporting it would fail the live one -- which,
+    now that a failure closes the session, would end the live tunnel's history with it."""
+    _connect(controller, config)
+    session = history.session_id
+    controller.runner.side_effect = OSError("the helper is gone")
+
+    controller._connect_worker(connections.resolve("client"), "123456", attempt=0)
+
+    assert controller.snapshot().state == CONNECTED
+    assert _row(history, session)["ended_at"] is None

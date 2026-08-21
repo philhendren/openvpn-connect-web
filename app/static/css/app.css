@@ -324,3 +324,32 @@ body { -webkit-font-smoothing: antialiased; }
 .scope-pill[data-mode="warn"]  { color: var(--st-warn); background: var(--st-warn-bg); }
 
 .scope-verdict { font-size: 1.05rem; font-weight: 600; line-height: 1.3; }
+
+/* --- session history ----------------------------------------------------- */
+
+.sessions-table td { vertical-align: middle; }
+.sessions-table td:first-child { white-space: nowrap; }
+
+/* The whole row opens the log, so it has to look and behave like a control: a pointer, a focus
+   ring, and a keyboard path, since the table is the only way to reach a past attempt's log. */
+.session-row { cursor: pointer; }
+.session-row:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.session-row.session-open td { background: var(--bs-tertiary-bg); }
+
+.session-id { font-variant-numeric: tabular-nums; font-weight: 600; }
+.session-name { margin-left: .45rem; color: var(--bs-secondary-color); }
+.session-when { margin-left: .45rem; font-size: .75rem; }
+
+/* Dropped and failed share the alarming colour; a disconnect you asked for is not an event, so
+   it stays as quiet as "ended". Same reasoning as the scope pill: only report trouble as
+   trouble. */
+.session-kind {
+  font-size: .68rem; letter-spacing: .04em; text-transform: uppercase; font-weight: 600;
+  color: var(--st-idle); background: var(--st-idle-bg);
+}
+.session-kind[data-tone="busy"] { color: var(--st-busy); background: var(--st-busy-bg); }
+.session-kind[data-tone="bad"]  { color: var(--st-bad);  background: var(--st-bad-bg); }
+.session-kind[data-tone="warn"] { color: var(--st-warn); background: var(--st-warn-bg); }
+
+.session-log-row td { background: var(--bs-tertiary-bg); padding: .5rem .6rem; }
+.session-log { max-height: 14rem; overflow-y: auto; }

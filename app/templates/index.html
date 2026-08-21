@@ -262,6 +262,75 @@
       <div class="card-body">
         <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
           <button class="panel-toggle collapsed" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#panel-sessions" aria-expanded="false"
+                  aria-controls="panel-sessions">
+            <span class="panel-chevron" aria-hidden="true"></span>
+            <span class="card-title-sm mb-0">Session history</span>
+          </button>
+          <span class="text-body-secondary small" id="sessions-headline">&mdash;</span>
+        </div>
+        <div class="collapse panel-body" id="panel-sessions" data-panel="sessions">
+          <dl class="facts row row-cols-2 row-cols-sm-3 row-cols-lg-6 g-3 mt-1 mb-3">
+            <div><dt>Sessions</dt><dd id="sessions-count">&mdash;</dd></div>
+            <div><dt>Time connected</dt><dd id="sessions-uptime">&mdash;</dd></div>
+            <div><dt>Longest</dt><dd id="sessions-longest">&mdash;</dd></div>
+            <div><dt>Typical</dt><dd id="sessions-median">&mdash;</dd></div>
+            <div><dt>Dropped</dt><dd id="sessions-drops">&mdash;</dd></div>
+            <div><dt>Carried</dt><dd id="sessions-bytes">&mdash;</dd></div>
+          </dl>
+
+          <div class="d-flex align-items-center gap-2 flex-wrap mb-2">
+            <label class="visually-hidden" for="sessions-search">Search sessions</label>
+            <input id="sessions-search" type="search" class="form-control form-control-sm routes-filter"
+                   placeholder="Search sessions&hellip;" autocomplete="off" spellcheck="false"
+                   aria-describedby="sessions-search-hint">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="sessions-refresh"
+                    title="Re-read the history">Refresh</button>
+            <span class="text-body-secondary small" id="sessions-matched"></span>
+          </div>
+          <p class="visually-hidden" id="sessions-search-hint">
+            Search by session number, connection name or how the session ended.
+          </p>
+
+          <div class="routes-scroll sessions-scroll">
+            <table class="table table-sm routes-table sessions-table mb-0">
+              <thead>
+                <tr>
+                  <th scope="col">Session</th>
+                  <th scope="col">Started</th>
+                  <th scope="col">Connected for</th>
+                  <th scope="col">Ended</th>
+                  <th scope="col" class="text-end">Carried</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-body">
+                <tr><td colspan="5" class="text-body-secondary">Loading history&hellip;</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="d-flex justify-content-center mt-2">
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="sessions-more" hidden>
+              Show older sessions
+            </button>
+          </div>
+
+          <p class="text-body-secondary small mb-0 mt-2" id="sessions-note">
+            The last <span id="sessions-window">7</span> days of connection attempts, newest
+            first. Select a session to read the log it left behind. A session that was still
+            running when the window began is kept whole, so the history occasionally reaches a
+            little further back than that; anything older is deleted, not hidden.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+          <button class="panel-toggle collapsed" type="button" data-bs-toggle="collapse"
                   data-bs-target="#panel-scope" aria-expanded="false" aria-controls="panel-scope">
             <span class="panel-chevron" aria-hidden="true"></span>
             <span class="card-title-sm mb-0">Tunnel scope</span>
