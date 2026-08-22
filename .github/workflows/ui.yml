@@ -41,8 +41,13 @@ jobs:
 
       # Keyed on the lockfile, so the browser is re-downloaded exactly when uv.lock moves
       # playwright and never otherwise. Restored, this step is a few seconds.
+      #
+      # v6, not v4: v4 targets the deprecated node20 runtime, and the runner forces it onto node24
+      # with a warning on every single run. Same trap as the note beside the actions in tests.yml,
+      # and this workflow walked straight into it. `v6` is a moving major tag, like checkout's, so
+      # it needs no pinning; setup-uv is the one that does.
       - name: Cache the browser
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
