@@ -38,10 +38,10 @@ Which means the laptop never has to join anything. That is the point:
 
 Joining a work network puts the entire machine inside somebody else's perimeter — their routes,
 their DNS, their visibility — for the sake of reaching a handful of internal services. That is a
-bad trade on a machine that is also my own. It is doubly unappealing on this one: I don't want to do it from ChromeOS itself, and Crostini, the
-Chromebook's Linux container, is a poor place to run a VPN in the first place. Connecting is not
-reliably clean, and the GUI you get for managing one is barely enough to switch it on, let alone
-tell you what switching it on did.
+bad trade on a machine that is also my own, and worse on a Chromebook: ChromeOS is not where I
+want a corporate tunnel, and Crostini, its Linux container, is a poor place to run a VPN in the
+first place. Connecting is not reliably clean, and the GUI you get for managing one is barely
+enough to switch it on, let alone tell you what switching it on did.
 
 So the tunnel lives on the headless box, and the laptop reaches through it rather than following
 it in:
@@ -81,8 +81,8 @@ They are answerable questions, though, and the answers are sitting right there o
 - What is this thing actually routing, and what is it leaving alone?
 - Did every route the server asked for actually get installed? (**Not** the same question — see
   [Pushed, but not installed](#pushed-but-not-installed).)
-- Who is resolving my DNS right now, and can the corporate network see every domain I look up, including the
-  ones that are none of their business?
+- Who is resolving my DNS right now, and can the corporate network see every domain I look up,
+  including the ones that are none of their business?
 - Is any of it escaping over IPv6 while the IPv4 side looks fine?
 - What happened at 3am when it dropped, and did it come back?
 
@@ -121,7 +121,7 @@ found along the way were the kind that hide from tests and turn up only when you
 system — a `systemctl reload` that never re-read the config, a `dnsmasq` conf-dir that loads every
 file it is handed. Those were caught by reading the machine, not by reading the code.
 
-What I would say against it: no human has line-by-line reviewed all of it, and it has one user and
+What I would say against it: no human has line-by-line reviewed all of it, and it was written for
 one deployment. Read the code before you trust it with a credential. MIT licensed — see
 [LICENSE](LICENSE) — so it is yours to fork and take in whatever direction you like.
 
@@ -182,7 +182,7 @@ code. Nothing is passed on the openvpn command line to force one or the other.
 
 The two clients install side by side and do not conflict, so on an `openvpn3` machine you can add
 the classic client and use both — this panel will drive the classic one and leave `openvpn3`
-alone. What a second backend would involve, and why it has not been attempted from here, is in
+alone. What a second backend would involve, and why it has not been attempted, is in
 [ROADMAP.md](ROADMAP.md#an-openvpn-3-backend).
 
 You will be told which situation you are in rather than left to find out at the first connect:
@@ -234,7 +234,7 @@ sudo dnf install dnsmasq               # optional
 ```bash
 sudo pacman -S --needed openvpn iproute2 whois curl ca-certificates
 sudo pacman -S dnsmasq                 # optional
-# systemd-resolved is part of the systemd package here
+# systemd-resolved is part of the systemd package on Arch
 ```
 
 **uv, on any of them** — install it as **the user who will run the app**, never as root:
@@ -701,9 +701,9 @@ OpenVPN then discards the pushed DNS instead of handing it to systemd-resolved, 
 resolver, everything falls back to dnsmasq, and the rules above decide what goes where. The match
 is a prefix, so it covers `dhcp-option DNS6` too.
 
-It is **a flag, not an edit to the stored profile**. The profile is the operator's own
-vendor-supplied file; rewriting it on a tick could not be undone on an untick. The directive is
-appended to the *derived* `.ovpn` at write time instead, which is regenerated from the database on
+It is **a flag, not an edit to the stored profile**. The profile is your own vendor-supplied file;
+rewriting it on a tick could not be undone on an untick. The directive is appended to the
+*derived* `.ovpn` at write time instead, which is regenerated from the database on
 every connect — so the flag is the only state, turning it off genuinely reverts it, and toggling
 takes effect on the next connect without re-uploading anything. A profile that already filters
 pushed DNS is left alone rather than given a second identical line.
@@ -749,11 +749,11 @@ brace.
 
 Bootstrap 5.3 and the OpenVPN mark are **vendored** into `app/static/vendor/` and
 `app/static/img/` — no CDN serves this page any script or stylesheet, which is what lets the CSP
-keep `default-src 'self'` with Google Fonts as its only exception. The palette is OpenVPN orange on warm graphite neutrals, defined as CSS custom properties
-in `app/static/css/app.css`; tunnel status has its own green/blue/red/amber scale so "in progress"
-never blends into the brand colour. Light and dark are driven by `[data-bs-theme]`, which
-`static/js/theme.js` sets before first paint from `localStorage` or the OS preference, and the
-toggle in the header flips it.
+keep `default-src 'self'` with Google Fonts as its only exception. The palette is OpenVPN orange
+on warm graphite neutrals, defined as CSS custom properties in `app/static/css/app.css`; tunnel
+status has its own green/blue/red/amber scale so "in progress" never blends into the brand
+colour. Light and dark are driven by `[data-bs-theme]`, which `static/js/theme.js` sets before
+first paint from `localStorage` or the OS preference, and the toggle in the header flips it.
 
 ## Tunnels this app did not start
 
@@ -833,9 +833,12 @@ Locally they use the Chrome you already have; CI uses Playwright's own Chromium,
 `uv.lock`, so a red run means this repository changed rather than a runner image. `VPN_UI_CHANNEL`
 picks between them.
 
-They cover what a person can *see*, not what they *do*: connecting, disconnecting and editing all
-need a controller a test can walk through states, and the stub these run against is deliberately
-frozen connected. See [ROADMAP.md](ROADMAP.md#tier-2-journey-tests).
+What they cover is deliberately bounded. Each one **loads the page and checks something is true**
+— a count, a hidden block, a field that appears for one profile and not another. What they do not
+cover is anything that *changes* state: connecting, disconnecting and editing all need a controller
+a test can walk through states, and the stub these run against is deliberately frozen connected.
+Those journeys, and what standing them up would take, are in
+[ROADMAP.md](ROADMAP.md#journey-tests-for-the-things-a-person-does).
 
 The JavaScript is linted by **oxlint**, not ESLint, and the reason is the same one behind the
 vendored Bootstrap: there is no `package.json`, no `node_modules` and no build step here, and a
@@ -845,9 +848,10 @@ but [`.oxlintrc.json`](.oxlintrc.json) — which carries the reason for every ru
 for the three it deliberately leaves off.
 
 Every push and pull request runs the suite on Python 3.12 and 3.13, plus ruff, oxlint, and a syntax
-check of the shell that makes up the privilege boundary. Coverage (currently ~93%, branch coverage included)
-is reported in the run summary and uploaded as an artifact; the 90% floor lives in `pyproject.toml`,
-so CI fails on the same number you do locally.
+check of the shell that makes up the privilege boundary. Branch coverage is reported in the run
+summary and uploaded as an artifact. The **floor is 90%**, and it lives in `pyproject.toml` rather
+than in the workflow, so CI fails on the same number you do locally — a floor to catch a change
+that guts the tests, not a target to chase.
 
 The screenshots in [USAGE.md](USAGE.md) are build artefacts, like the icons: regenerate them with
 `uv run --group screenshots python tools/screenshots.py`, which seeds a throwaway installation,
