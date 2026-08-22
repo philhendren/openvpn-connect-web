@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}OpenVPN Connect{% endblock %}</title>
+  <title>{% block title %}OpenVPN Connect Web{% endblock %}</title>
   <link rel="icon" href="{{ url_for('static', filename='img/favicon.svg') }}" type="image/svg+xml">
   <link rel="icon" href="{{ url_for('static', filename='img/favicon-32.png') }}" sizes="32x32" type="image/png">
   {# Large PNGs are linked as icons too: over plain HTTP, Chrome's "install as app" falls back to
@@ -13,7 +13,9 @@
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='img/apple-touch-icon.png') }}">
   <link rel="manifest" href="{{ url_for('ui.manifest') }}">
   <meta name="theme-color" content="#EA7E20">
-  <meta name="apple-mobile-web-app-title" content="OpenVPN">
+  {# The name under the icon on a home screen. Deliberately not "OpenVPN": an icon labelled
+     that, next to the real client, is the confusion this app has to avoid. #}
+  <meta name="apple-mobile-web-app-title" content="Connect Web">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -27,7 +29,7 @@
     <header class="masthead d-flex align-items-center gap-3 mb-4">
       <span class="brand-badge">{% include "_mark.html" %}</span>
       <div class="me-auto">
-        <h1 class="h5 mb-0 fw-semibold">OpenVPN Connect</h1>
+        <h1 class="h5 mb-0 fw-semibold">OpenVPN Connect Web</h1>
         <p class="text-body-secondary small mb-0">{% block subtitle %}Tunnel control for this machine{% endblock %}</p>
       </div>
       <button type="button" class="btn btn-outline-secondary btn-sm btn-icon" id="theme-toggle"
@@ -59,6 +61,14 @@
     {% endwith %}
 
     {% block content %}{% endblock %}
+
+    {# On every page, including the login screen, because that is where somebody who arrived here
+       expecting OpenVPN Inc.'s client would be standing. #}
+    <footer class="app-footer text-body-secondary small">
+      <strong>OpenVPN Connect Web</strong> — an unofficial, self-hosted control panel for the
+      <code>openvpn</code> client on this machine. Not affiliated with or endorsed by OpenVPN Inc.,
+      and not their <em>OpenVPN Connect</em> app.
+    </footer>
   </div>
 
   <script src="{{ url_for('static', filename='vendor/bootstrap/bootstrap.bundle.min.js') }}" defer></script>

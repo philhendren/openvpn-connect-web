@@ -1,5 +1,5 @@
 [Unit]
-Description=OpenVPN Connect — web control panel for the local OpenVPN client
+Description=OpenVPN Connect Web — unofficial web control panel for the local OpenVPN client
 Documentation=file://@APP_DIR@/CLAUDE.md
 After=network-online.target
 Wants=network-online.target

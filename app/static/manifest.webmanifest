@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "OpenVPN Connect",
-  "short_name": "OpenVPN",
-  "description": "Tunnel control for this machine",
+  "name": "OpenVPN Connect Web",
+  "short_name": "Connect Web",
+  "description": "Unofficial web control panel for the OpenVPN client on this machine",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

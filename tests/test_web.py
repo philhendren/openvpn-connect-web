@@ -328,7 +328,10 @@ def test_manifest_advertises_installable_icons(client):
     manifest = json.loads(response.get_data(as_text=True))
     response.close()
 
-    assert manifest["name"] == "OpenVPN Connect"
+    # The installed app's name is the one place the confusion with OpenVPN Inc.'s own client
+    # would be worst -- an icon on a home screen has no room for an explanation.
+    assert manifest["name"] == "OpenVPN Connect Web"
+    assert manifest["short_name"] != "OpenVPN"
     assert manifest["display"] == "standalone"
     assert manifest["start_url"] == "/"
 
