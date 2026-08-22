@@ -38,7 +38,7 @@ Which means the laptop never has to join anything. That is the point:
 
 Joining a work network puts the entire machine inside somebody else's perimeter — their routes,
 their DNS, their visibility — for the sake of reaching a handful of internal services. That is a
-bad trade on a machine that is also my own. It is doubly unappealing on this one: Crostini, the
+bad trade on a machine that is also my own. It is doubly unappealing on this one: I don't want to do it from ChromeOS itself, and Crostini, the
 Chromebook's Linux container, is a poor place to run a VPN in the first place. Connecting is not
 reliably clean, and the GUI you get for managing one is barely enough to switch it on, let alone
 tell you what switching it on did.
