@@ -657,7 +657,7 @@
     return tr;
   };
 
-  function renderDns(payload) {
+  function renderDns(payload, { verdict = true } = {}) {
     const domainRules = payload.domain_rules || [];
     const fallbackRules = payload.fallback_rules || [];
 
@@ -722,8 +722,10 @@
     if (payload.warning) dnsFeedbackShow(payload.warning, false);
 
     // The verdict cross-references the rules that were just rendered, so it is refreshed from
-    // here rather than from each caller -- every path that changes a rule ends up here.
-    loadDnsStatus();
+    // here rather than from each caller -- every path that changes a rule ends up here. The one
+    // caller that opts out is the boot-time count for a closed panel: /api/dns is a pure database
+    // read, but the verdict behind it shells out to resolvectl, and nobody is looking at it yet.
+    if (verdict) loadDnsStatus();
   }
 
   /* Who actually resolves what. A domain forwarder is essential on a tunnel that applies no DNS
@@ -774,10 +776,10 @@
     }
   }
 
-  async function loadDns() {
+  async function loadDns(options) {
     if (!dnsDomainBody) return;
     try {
-      renderDns(await api("/api/dns"));
+      renderDns(await api("/api/dns"), options);
     } catch (err) {
       dnsDomainBody.replaceChildren(dnsEmptyRow(`Could not load DNS rules: ${err.message}`, 3));
       dnsFallbackBody.replaceChildren();
@@ -1530,6 +1532,13 @@
       });
     });
   }
+
+  /* The DNS badge is a count, not a verdict, so it has to be right while the panel is shut --
+     the way the routes and scope badges already are, both of which are refreshed by syncRoutes
+     on the first status poll. Without this it sat at the placeholder until somebody opened the
+     panel, which made a real number look like a missing one. A closed panel fetches the rules
+     alone and skips the resolver check; opening it fires shown.bs.collapse and gets both. */
+  if (dnsPanel && !dnsPanel.classList.contains("show")) loadDns({ verdict: false });
 
   if (routesFilter) {
     routesFilter.addEventListener("input", renderRoutes);
