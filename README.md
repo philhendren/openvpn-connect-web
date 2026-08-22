@@ -791,11 +791,40 @@ uv run flask --app app run --debug --port 5000     # localhost dev server
 uv run pytest                                      # ~9s
 uv run pytest --cov=app                            # with coverage; fails under 90%
 uv run ruff check . && uv run ruff format .
+uv run --group ui pytest uitests/                  # the browser scenarios; ~20s
 ```
 
 Tests never touch the real system: `subprocess.run` and the management client are both injected into
 `OpenVpnController`, and the argv assertions in `tests/test_openvpn.py` are the standing defence
 against command-injection regressions.
+
+### The scenarios in `uitests/`
+
+The Python suite stops at the JSON. `app/static/js/app.js` is over 1500 lines that it never
+reaches, and a bug lived there long enough to be noticed by hand: `/api/dns` had been returning the
+right rule count all along, and the badge simply never asked for it.
+
+So there is a second, slower suite that drives the real page in a real browser — the same seeded
+instance the screenshots are taken from, via `tools.screenshots.instance()`, so both are looking at
+one world. It is **deliberately outside `testpaths`**: `uv run pytest` stays ten seconds and never
+wants a browser, and CI's `uv sync --frozen` never downloads one.
+
+Every scenario defends a sentence somebody can read in this file, in [USAGE.md](USAGE.md), or in a
+module docstring — that is the entire selection rule, and it is what keeps this from becoming a
+second, slower copy of the unit tests. When one fails the question is not whether the test is worth
+keeping but *which documented claim is about to become untrue*, which is a thing to fix in the same
+pull request rather than discover a year later. There are seven, covering the panel-badge contract,
+the two endpoints that must not be fetched when nobody is looking, per-profile MFA, remembered
+panels, and the rejected-routes block in both directions.
+
+They run as their own `journeys` workflow rather than a third job beside the others: a browser
+download, a cache and a failure mode of their own. A failed scenario uploads a Playwright trace —
+DOM, network log and screenshot at every step — because a red browser test whose only evidence is a
+stack trace is one people learn to re-run instead of read. Open one with `playwright show-trace`.
+
+Locally they use the Chrome you already have; CI uses Playwright's own Chromium, pinned by
+`uv.lock`, so a red run means this repository changed rather than a runner image. `VPN_UI_CHANNEL`
+picks between them.
 
 Every push and pull request runs the suite on Python 3.12 and 3.13, plus ruff and a syntax check of
 the shell that makes up the privilege boundary. Coverage (currently ~93%, branch coverage included)

@@ -602,6 +602,9 @@ dev = [
 screenshots = [
     { name = "playwright" },
 ]
+ui = [
+    { name = "playwright" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -617,6 +620,7 @@ dev = [
     { name = "ruff", specifier = ">=0.6" },
 ]
 screenshots = [{ name = "playwright", specifier = ">=1.40" }]
+ui = [{ name = "playwright", specifier = ">=1.40" }]
 
 [[package]]
 name = "werkzeug"

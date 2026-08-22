@@ -452,6 +452,22 @@ def build(config, db, connections, history, rules, source_root: Path):
     )
 
 
+def instance(tmp: Path):
+    """Stand the whole seeded installation up in one call, and hand back the Flask app.
+
+    Both consumers of this module need the same four steps in the same order, and one of them is
+    an ordering trap: ``StubController`` reads ``LIVE_SERIES[-1]`` at construction, so the series
+    has to exist *before* the app is built. Doing it here means neither caller can get it wrong.
+    """
+    if not LIVE_SERIES:
+        LIVE_SERIES.extend(traffic_series())
+    config, db, connections, history, rules = seed(tmp)
+    app = build(config, db, connections, history, rules, source_root=tmp / "vpn")
+    # The vault has to be the one the seeding used, or the connections cannot be decrypted.
+    app.config["VAULT"] = _vault_of(connections)
+    return app
+
+
 def build_unconfigured(tmp: Path):
     """A second app with **no login password**, which is the whole state being photographed.
 
@@ -626,15 +642,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    LIVE_SERIES.extend(traffic_series())
-
     tmp = Path(tempfile.mkdtemp(prefix="vpn-connect-shots-"))
     try:
-        config, db, connections, history, rules = seed(tmp)
-        app = build(config, db, connections, history, rules, source_root=tmp / "vpn")
-        # The vault has to be the one the seeding used, or the connections cannot be decrypted.
-        app.config["VAULT"] = _vault_of(connections)
-        serve(app)
+        serve(instance(tmp))
         serve(build_unconfigured(tmp), SETUP_PORT)
         print(
             f"serving the seeded instance on http://127.0.0.1:{PORT}"

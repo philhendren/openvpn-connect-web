@@ -21,3 +21,6 @@ CLAUDE.md
 .coverage
 coverage.xml
 htmlcov/
+
+# Traces and screenshots left behind by a failed browser scenario (uitests/).
+uitests/artifacts/
