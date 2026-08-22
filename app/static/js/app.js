@@ -1211,11 +1211,12 @@
     text("sessions-uptime", summary.sessions ? spanText(summary.up_seconds || 0) : "—");
     text("sessions-longest", summary.connected ? spanText(summary.longest_up_seconds || 0) : "—");
     text("sessions-median", summary.connected ? spanText(summary.median_up_seconds || 0) : "—");
-    /* Drops and disconnects side by side, because the number only means something next to the
-       one it is not: "four drops, one of them yours" is a different week from "four drops". */
-    text("sessions-drops", summary.sessions
-      ? `${summary.drops || 0} · ${summary.manual || 0} by you`
-      : "—");
+    /* Drops, disconnects and failures each get their own number rather than being crammed into
+       one: a drop only means something next to the endings it is not, and "3 · 4 by you" in a
+       single field reads as though four of the three drops were yours. */
+    text("sessions-drops", summary.sessions ? String(summary.drops || 0) : "—");
+    text("sessions-manual", summary.sessions ? String(summary.manual || 0) : "—");
+    text("sessions-failed", summary.sessions ? String(summary.failed || 0) : "—");
     text("sessions-bytes", summary.sessions
       ? `${bytes(summary.bytes_in)} ↓ · ${bytes(summary.bytes_out)} ↑`
       : "—");

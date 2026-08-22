@@ -15,6 +15,13 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.6",
 ]
+# Deliberately its own group rather than part of dev: only `tools/screenshots.py` needs it, it is
+# never imported by the app or the suite, and CI (`uv sync --frozen`, which takes dev alone) must
+# not spend a download on a browser driver it will never drive.
+#   uv run --group screenshots python tools/screenshots.py
+screenshots = [
+    "playwright>=1.40",
+]
 
 [tool.ruff]
 line-length = 100
@@ -27,6 +34,9 @@ ignore = ["S101"]
 [tool.ruff.lint.per-file-ignores]
 # Dummy credentials in fixtures and helper defaults are the point of these files.
 "tests/*" = ["S105", "S106", "S107"]
+# Invented credentials for a database that lives in /tmp for thirty seconds, and a *seeded* RNG so
+# the fake traffic graph comes out identical every time the screenshots are regenerated.
+"tools/screenshots.py" = ["S105", "S106", "S311"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
