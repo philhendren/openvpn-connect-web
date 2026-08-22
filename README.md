@@ -792,6 +792,7 @@ uv run flask --app app run --debug --port 5000     # localhost dev server
 uv run pytest                                      # ~9s
 uv run pytest --cov=app                            # with coverage; fails under 90%
 uv run ruff check . && uv run ruff format .
+npx --yes oxlint@1.79.0 -c .oxlintrc.json app/static/js/    # the JavaScript
 uv run --group ui pytest uitests/                  # the browser scenarios; ~20s
 ```
 
@@ -831,8 +832,15 @@ They cover what a person can *see*, not what they *do*: connecting, disconnectin
 need a controller a test can walk through states, and the stub these run against is deliberately
 frozen connected. See [ROADMAP.md](ROADMAP.md#tier-2-journey-tests).
 
-Every push and pull request runs the suite on Python 3.12 and 3.13, plus ruff and a syntax check of
-the shell that makes up the privilege boundary. Coverage (currently ~93%, branch coverage included)
+The JavaScript is linted by **oxlint**, not ESLint, and the reason is the same one behind the
+vendored Bootstrap: there is no `package.json`, no `node_modules` and no build step here, and a
+dependency tree to check 1,600 lines would cost more than the checking is worth. oxlint is a single
+binary that `npx` fetches and runs, pinned to an exact version, and it leaves nothing in the tree
+but [`.oxlintrc.json`](.oxlintrc.json) — which carries the reason for every rule it turns on, and
+for the three it deliberately leaves off.
+
+Every push and pull request runs the suite on Python 3.12 and 3.13, plus ruff, oxlint, and a syntax
+check of the shell that makes up the privilege boundary. Coverage (currently ~93%, branch coverage included)
 is reported in the run summary and uploaded as an artifact; the 90% floor lives in `pyproject.toml`,
 so CI fails on the same number you do locally.
 

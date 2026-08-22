@@ -112,3 +112,28 @@ jobs:
           for script in install_prerequisites.sh deploy/install.sh deploy/vpn-connect-helper.in; do
             bash -n "$script" && echo "ok: $script"
           done
+
+  # Its own job rather than a step in `ruff` above: this is the only thing in the repository that
+  # wants Node, and the Python job should not grow a toolchain it never uses. It is still in this
+  # workflow rather than a file of its own, because it is a lint and belongs with the lints --
+  # ui.yml earned separation by needing a browser download and a genuinely different failure mode.
+  lint-js:
+    name: oxlint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # v7 targets node24. v4 does not -- see the note beside the actions above.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # Pinned exactly, like setup-uv and for the same reason: a linter that quietly gains a rule
+      # on a new release turns a green branch red without anybody having committed anything. The
+      # config, and the reasoning for every rule in it, is in .oxlintrc.json.
+      #
+      # No package.json and no node_modules: oxlint is a single binary that npx fetches and runs,
+      # so linting the JavaScript leaves nothing behind in the tree.
+      - name: oxlint
+        run: npx --yes oxlint@1.79.0 -c .oxlintrc.json app/static/js/
