@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 
 from app.db import (
+    MIGRATIONS_DIR,
     MigrationError,
     discover,
     migrate,
@@ -17,6 +18,18 @@ from app.db import (
 
 def _write(directory, name: str, sql: str) -> None:
     (directory / name).write_text(sql)
+
+
+def _shipped_through(directory, version: int) -> None:
+    """Copy the real migrations up to ``version`` into a directory of their own.
+
+    Lets a test stand a database up as it was at some point in this project's history and then
+    run the newer migrations against it -- which is the only way to exercise an upgrade, since
+    the ordinary fixtures build every database from scratch at the current version.
+    """
+    for number, path in discover():
+        if number <= version:
+            (directory / path.name).write_text(path.read_text(encoding="utf-8"))
 
 
 @pytest.fixture
@@ -32,7 +45,7 @@ def migrations(tmp_path):
 def test_the_shipped_migrations_apply(db):
     conn = db
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"vault", "connections", "settings", "events", "log_sessions", "log_lines"} <= tables
+    assert {"vault", "connections", "settings", "events", "sessions", "log_lines"} <= tables
     assert schema_version(conn) >= 1
 
 
@@ -58,11 +71,77 @@ def test_foreign_keys_cascade(db):
     """log_lines must go when their session does, or pruning would leak rows."""
     conn = db
     with transaction(conn):
-        conn.execute("INSERT INTO log_sessions (id, started_at) VALUES (1, 'now')")
+        conn.execute("INSERT INTO sessions (id, started_at) VALUES (1, 'now')")
         conn.execute("INSERT INTO log_lines (session_id, at, line) VALUES (1, 'now', 'x')")
     with transaction(conn):
-        conn.execute("DELETE FROM log_sessions WHERE id = 1")
+        conn.execute("DELETE FROM sessions WHERE id = 1")
     assert conn.execute("SELECT COUNT(*) FROM log_lines").fetchone()[0] == 0
+
+
+# --- 0007, the log_sessions -> sessions rename -----------------------------
+
+
+def _seed_session(conn) -> None:
+    with transaction(conn):
+        conn.execute(
+            "INSERT INTO log_sessions (id, connection, started_at, ended_at, outcome)"
+            " VALUES (1, 'examplecorp', 'then', 'later', 'connected')"
+        )
+        conn.execute("INSERT INTO log_lines (session_id, at, line) VALUES (1, 'then', 'x')")
+        conn.execute(
+            "INSERT INTO traffic_samples (session_id, at, bytes_in, bytes_out)"
+            " VALUES (1, 1.0, 10, 20)"
+        )
+
+
+def test_the_rename_keeps_the_rows_that_were_already_there(open_db, migrations, tmp_path):
+    """A rename that lost history would be worse than the name it fixed."""
+    _shipped_through(migrations, 6)
+    conn = open_db(directory=tmp_path)
+    migrate(conn, migrations)
+    _seed_session(conn)
+
+    assert migrate(conn, MIGRATIONS_DIR) >= 7
+
+    row = conn.execute("SELECT connection, outcome FROM sessions WHERE id = 1").fetchone()
+    assert (row["connection"], row["outcome"]) == ("examplecorp", "connected")
+
+
+def test_the_rename_leaves_no_table_behind(open_db, migrations, tmp_path):
+    _shipped_through(migrations, 6)
+    conn = open_db(directory=tmp_path)
+    migrate(conn, migrations)
+    migrate(conn, MIGRATIONS_DIR)
+
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "sessions" in tables
+    assert "log_sessions" not in tables
+
+
+def test_the_rename_carries_the_cascades_with_it(open_db, migrations, tmp_path):
+    """SQLite rewrites the REFERENCES clauses during the rename -- prove it, do not assume it."""
+    _shipped_through(migrations, 6)
+    conn = open_db(directory=tmp_path)
+    migrate(conn, migrations)
+    _seed_session(conn)
+    migrate(conn, MIGRATIONS_DIR)
+
+    with transaction(conn):
+        conn.execute("DELETE FROM sessions WHERE id = 1")
+    assert conn.execute("SELECT COUNT(*) FROM log_lines").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM traffic_samples").fetchone()[0] == 0
+
+
+def test_the_rename_takes_the_indexes_with_it(open_db, migrations, tmp_path):
+    """A table rename leaves index names behind, so 0007 has to move them itself."""
+    _shipped_through(migrations, 6)
+    conn = open_db(directory=tmp_path)
+    migrate(conn, migrations)
+    migrate(conn, MIGRATIONS_DIR)
+
+    indexes = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+    assert {"sessions_recent", "sessions_ended"} <= indexes
+    assert not {name for name in indexes if name.startswith("log_sessions")}
 
 
 def test_only_one_connection_can_be_default(db):

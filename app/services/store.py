@@ -516,7 +516,7 @@ def recent_events(conn: sqlite3.Connection, limit: int = 10) -> list[str]:
     return [f"{row['at']} {row['kind']} {row['reason']}".rstrip() for row in rows]
 
 
-# --- log sessions ----------------------------------------------------------
+# --- sessions --------------------------------------------------------------
 
 
 def window_start(days: int = RETENTION_DAYS, now: datetime | None = None) -> str:
@@ -551,16 +551,16 @@ _LIST_SESSIONS = (
     " (SELECT COUNT(*) FROM log_lines l WHERE l.session_id = s.id) AS lines,"
     " (SELECT MAX(t.bytes_in) FROM traffic_samples t WHERE t.session_id = s.id) AS bytes_in,"
     " (SELECT MAX(t.bytes_out) FROM traffic_samples t WHERE t.session_id = s.id) AS bytes_out"
-    f" FROM log_sessions s WHERE {_in_window('s')} ORDER BY s.id DESC LIMIT ?"
+    f" FROM sessions s WHERE {_in_window('s')} ORDER BY s.id DESC LIMIT ?"
 )
 
-_SWEEP_SESSIONS = f"DELETE FROM log_sessions WHERE NOT {_in_window()}"  # noqa: S608
+_SWEEP_SESSIONS = f"DELETE FROM sessions WHERE NOT {_in_window()}"  # noqa: S608
 
 
-def start_log_session(conn: sqlite3.Connection, connection: str | None) -> int:
+def start_session(conn: sqlite3.Connection, connection: str | None) -> int:
     with transaction(conn):
         cursor = conn.execute(
-            "INSERT INTO log_sessions (connection, started_at) VALUES (?, ?)",
+            "INSERT INTO sessions (connection, started_at) VALUES (?, ?)",
             (connection, _now()),
         )
         return int(cursor.lastrowid or 0)
@@ -586,13 +586,11 @@ def append_lines(conn: sqlite3.Connection, session_id: int, lines: list[str]) ->
         )
 
 
-def end_log_session(
-    conn: sqlite3.Connection, session_id: int, outcome: str, reason: str = ""
-) -> None:
+def end_session(conn: sqlite3.Connection, session_id: int, outcome: str, reason: str = "") -> None:
     """Close an attempt. ``reason`` is the controller's own verdict on *why* it ended."""
     with transaction(conn):
         conn.execute(
-            "UPDATE log_sessions SET ended_at = ?, outcome = ?, reason = ? WHERE id = ?",
+            "UPDATE sessions SET ended_at = ?, outcome = ?, reason = ? WHERE id = ?",
             (_now(), outcome, reason, session_id),
         )
 
@@ -607,7 +605,7 @@ def mark_session_connected(conn: sqlite3.Connection, session_id: int) -> None:
     """
     with transaction(conn):
         conn.execute(
-            "UPDATE log_sessions SET connected_at = ? WHERE id = ? AND connected_at IS NULL",
+            "UPDATE sessions SET connected_at = ? WHERE id = ? AND connected_at IS NULL",
             (_now(), session_id),
         )
 
@@ -625,7 +623,7 @@ def recent_sessions(conn: sqlite3.Connection, limit: int = 10) -> list[dict[str,
     rows = conn.execute(
         "SELECT s.id, s.connection, s.started_at, s.ended_at, s.outcome,"
         " (SELECT COUNT(*) FROM log_lines l WHERE l.session_id = s.id) AS lines"
-        " FROM log_sessions s ORDER BY s.id DESC LIMIT ?",
+        " FROM sessions s ORDER BY s.id DESC LIMIT ?",
         (limit,),
     ).fetchall()
     return [dict(row) for row in rows]
@@ -670,8 +668,8 @@ def prune_sessions(
     with transaction(conn):
         aged = conn.execute(_SWEEP_SESSIONS, (window_start(days, now),)).rowcount
         excess = conn.execute(
-            "DELETE FROM log_sessions WHERE id NOT IN ("
-            "  SELECT id FROM log_sessions ORDER BY id DESC LIMIT ?)",
+            "DELETE FROM sessions WHERE id NOT IN ("
+            "  SELECT id FROM sessions ORDER BY id DESC LIMIT ?)",
             (keep,),
         ).rowcount
     return aged + excess
