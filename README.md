@@ -113,13 +113,13 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-What I would say in its defence: the tests are real (716, and they never touch the real system —
-`subprocess.run` and the management client are injected throughout), the privilege boundary is
-narrow and deliberate (one root helper, a fixed set of verbs, no caller-supplied paths or content
-crossing into root), and several of the bugs found along the way were the kind that hide from
-tests and turn up only when you check the running system — a `systemctl reload` that never re-read
-the config, a `dnsmasq` conf-dir that loads every file it is handed. Those were caught by reading
-the machine, not by reading the code.
+What I would say in its defence: the tests are real (717, and they never touch the real system —
+`subprocess.run` and the management client are injected throughout, and a further suite drives the
+page in a real browser), the privilege boundary is narrow and deliberate (one root helper, a fixed
+set of verbs, no caller-supplied paths or content crossing into root), and several of the bugs
+found along the way were the kind that hide from tests and turn up only when you check the running
+system — a `systemctl reload` that never re-read the config, a `dnsmasq` conf-dir that loads every
+file it is handed. Those were caught by reading the machine, not by reading the code.
 
 What I would say against it: no human has line-by-line reviewed all of it, and it has one user and
 one deployment. Read the code before you trust it with a credential. MIT licensed — see
@@ -799,6 +799,11 @@ uv run --group ui pytest uitests/                  # the browser scenarios; ~20s
 Tests never touch the real system: `subprocess.run` and the management client are both injected into
 `OpenVpnController`, and the argv assertions in `tests/test_openvpn.py` are the standing defence
 against command-injection regressions.
+
+The test count quoted near the top of this file is checked by `tests/test_readme.py`, so it cannot
+quietly go stale — a suite that grows fails that test until the number is corrected. Correct it
+with `uv run python tools/sync_readme.py --fix`. It counts by *collecting* rather than by reading
+the source, because `parametrize` makes those two different numbers.
 
 ### The scenarios in `uitests/`
 
