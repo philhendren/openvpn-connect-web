@@ -182,7 +182,8 @@ code. Nothing is passed on the openvpn command line to force one or the other.
 
 The two clients install side by side and do not conflict, so on an `openvpn3` machine you can add
 the classic client and use both — this panel will drive the classic one and leave `openvpn3`
-alone.
+alone. What a second backend would involve, and why it has not been attempted from here, is in
+[ROADMAP.md](ROADMAP.md#an-openvpn-3-backend).
 
 You will be told which situation you are in rather than left to find out at the first connect:
 
@@ -825,6 +826,10 @@ stack trace is one people learn to re-run instead of read. Open one with `playwr
 Locally they use the Chrome you already have; CI uses Playwright's own Chromium, pinned by
 `uv.lock`, so a red run means this repository changed rather than a runner image. `VPN_UI_CHANNEL`
 picks between them.
+
+They cover what a person can *see*, not what they *do*: connecting, disconnecting and editing all
+need a controller a test can walk through states, and the stub these run against is deliberately
+frozen connected. See [ROADMAP.md](ROADMAP.md#tier-2-journey-tests).
 
 Every push and pull request runs the suite on Python 3.12 and 3.13, plus ruff and a syntax check of
 the shell that makes up the privilege boundary. Coverage (currently ~93%, branch coverage included)
