@@ -113,7 +113,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-What I would say in its defence: the tests are real (717, and they never touch the real system —
+**What I would say in its defence:** the tests are real (717, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout, and a further suite drives the
 page in a real browser), the privilege boundary is narrow and deliberate (one root helper, a fixed
 set of verbs, no caller-supplied paths or content crossing into root), and several of the bugs
@@ -121,8 +121,10 @@ found along the way were the kind that hide from tests and turn up only when you
 system — a `systemctl reload` that never re-read the config, a `dnsmasq` conf-dir that loads every
 file it is handed. Those were caught by reading the machine, not by reading the code.
 
-What I would say against it: no human has line-by-line reviewed all of it, and it was written for
-one deployment. Read the code before you trust it with a credential. MIT licensed — see
+**What I would say against it:** no human has line-by-line reviewed all of it. I have reviewed as much of it as I could as Claude was building it, but "the machine" got carried away sometimes and this has made it tough. many of the unit tests have been taken on trust and this is a risk acceptance I have taken, as it was written for
+one deployment. 
+
+Read the code before you trust it with a credential. MIT licensed — see
 [LICENSE](LICENSE) — so it is yours to fork and take in whatever direction you like.
 
 ## How it works
