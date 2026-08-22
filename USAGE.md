@@ -26,6 +26,12 @@ That is why a restart signs you out, and why nothing can connect the tunnel unti
 signed in at least once. If the app has no password configured yet it shows a setup page instead,
 telling you the command to run.
 
+![The setup page: no password is configured, with the commands to generate one](docs/screenshots/setup.png)
+
+That page is what a fresh install looks like, and it is deliberately a dead end: the commands have
+to be run on the machine itself, because setting a password from a page that anybody can reach
+would be a way in rather than a way to close one.
+
 ---
 
 ## Adding a connection

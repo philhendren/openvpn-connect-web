@@ -135,6 +135,9 @@ body { -webkit-font-smoothing: antialiased; }
   color: var(--bs-secondary-color); margin-bottom: 1rem;
 }
 .card-narrow { max-width: 400px; margin-top: 3rem; }
+/* The setup card holds commands meant to be copied, and 400px wraps every one of them mid-flag.
+   Wide enough for the longest line, and no wider. */
+.card-setup { max-width: 560px; }
 
 /* --- status -------------------------------------------------------------- */
 
