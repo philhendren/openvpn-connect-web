@@ -1,0 +1,161 @@
+# Cuts a release: works out the next version, tags it, and publishes a GitHub Release.
+#
+# Run it from the Actions tab -- "Release" -> "Run workflow". There is nothing to run locally and
+# nothing to remember; the only decision is which part of the version to increase.
+#
+# **Tags only. This never commits to `main`.** A workflow that pushes to the default branch is one
+# that breaks the day branch protection is turned on, which for a repository about to go public is
+# a matter of when rather than whether. So `pyproject.toml` is the *seed* for the first release and
+# tags are the source of truth after that -- see tools/next_version.py, which owns the arithmetic
+# and is unit-tested, because a pushed tag somebody has already fetched is not something you can
+# take back.
+#
+# Every dispatch input is passed through the environment rather than interpolated into a shell
+# line. `version` is free text, and `${{ }}` inside `run:` is pasted in before bash ever sees it --
+# the same class of mistake the argv assertions in tests/test_openvpn.py exist to prevent.
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Which part of the version to increase"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      version:
+        description: "Release exactly this version instead (e.g. 1.0.0). Overrides the bump."
+        type: string
+        default: ""
+      dry_run:
+        description: "Work out the version and stop, without tagging anything"
+        type: boolean
+        default: false
+
+# The tag and the release are the two things written. Nothing else needs a grant.
+permissions:
+  contents: write
+
+# Two releases at once would race for the same tag name and one would lose confusingly.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# -eo pipefail everywhere: the default shell for `run` is `bash -e` *without* pipefail, so a
+# failing command upstream of a pipe is reported as a success by whatever came after it.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    name: Tag and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      # Releases come off the default branch. Tagging a feature branch produces a version nobody
+      # can find the code for, and it is easier to refuse than to explain later.
+      - name: Refuse anything but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Releases are cut from main. This run was dispatched on ${{ github.ref }}."
+          exit 1
+
+      # fetch-depth: 0 for the tags -- the whole decision depends on knowing which already exist,
+      # and a shallow clone reports none, which would silently re-cut the first release every time.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          cache-suffix: release
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Work out the version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+          EXACT: ${{ inputs.version }}
+        run: |
+          uv run --frozen python tools/next_version.py \
+            --bump "$BUMP" --version "$EXACT" > "$RUNNER_TEMP/version.env"
+          cat "$RUNNER_TEMP/version.env"
+          cat "$RUNNER_TEMP/version.env" >> "$GITHUB_OUTPUT"
+
+      # Belt and braces. next_version.py refuses to go backwards, but it cannot know about a tag
+      # created by hand between the checkout and now, and an existing tag must never be moved.
+      - name: Refuse a tag that already exists
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::$TAG already exists. A release never moves a tag that is already out."
+            exit 1
+          fi
+
+      - name: Summary
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+          FIRST: ${{ steps.version.outputs.first }}
+          BUMP: ${{ inputs.bump }}
+          EXACT: ${{ inputs.version }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "## $TAG"
+            echo
+            if [ "$FIRST" = "true" ]; then
+              echo "First release. The version comes from \`pyproject.toml\` unbumped — a project"
+              echo "that declared itself 0.1.0 and never released should ship as 0.1.0."
+            elif [ -n "$EXACT" ]; then
+              echo "Exact version requested, overriding the \`$BUMP\` bump. Previous: $PREVIOUS."
+            else
+              echo "\`$BUMP\` bump from $PREVIOUS."
+            fi
+            echo
+            echo "Commit: \`$SHA\`"
+            if [ "$DRY_RUN" = "true" ]; then
+              echo
+              echo "**Dry run — nothing was tagged or published.**"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Annotated rather than lightweight: an annotated tag carries who made it and when, which is
+      # the difference between a release and a bookmark. Pushed as its own ref, so no branch is
+      # touched and nothing needs write access to main.
+      - name: Tag
+        if: ${{ !inputs.dry_run }}
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "refs/tags/$TAG"
+
+      # Notes are generated by GitHub from the commits and pull requests since the previous tag,
+      # so there is no changelog file to keep up to date by hand -- which is the kind of file that
+      # is accurate for two releases and then is not.
+      - name: Publish the release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+        run: |
+          if [ -n "$PREVIOUS" ]; then
+            gh release create "$TAG" --title "$TAG" \
+              --generate-notes --notes-start-tag "$PREVIOUS"
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
