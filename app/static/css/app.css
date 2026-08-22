@@ -359,3 +359,15 @@ body { -webkit-font-smoothing: antialiased; }
 
 .session-log-row td { background: var(--bs-tertiary-bg); padding: .5rem .6rem; }
 .session-log { max-height: 14rem; overflow-y: auto; }
+
+/* --- footer -------------------------------------------------------------- */
+
+/* Quiet, but on every page: it exists to answer "is this the OpenVPN Connect app?" before
+   anybody has to ask. */
+.app-footer {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--bs-border-color);
+  line-height: 1.6;
+}
+.app-footer code { color: inherit; }

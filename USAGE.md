@@ -1,4 +1,7 @@
-# Using OpenVPN Connect
+# Using OpenVPN Connect Web
+
+*`openvpn-connect-web` — an unofficial panel for the `openvpn` client on your own machine, not
+OpenVPN Inc.'s* OpenVPN Connect *app.*
 
 A walkthrough of the panel, screen by screen. [README.md](README.md) covers what it is, how it is
 built and how to install it; this file is what it looks like to use.
