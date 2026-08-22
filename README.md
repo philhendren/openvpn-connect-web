@@ -43,7 +43,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-What I would say in its defence: the tests are real (581, and they never touch the real system —
+What I would say in its defence: the tests are real (612, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout), the privilege boundary is
 narrow and deliberate (one root helper, a fixed set of verbs, no caller-supplied paths or content
 crossing into root), and several of the bugs found along the way were the kind that hide from
