@@ -1,0 +1,59 @@
+{
+  // Linting for the two hand-written JavaScript files, app/static/js/. Everything else in
+  // app/static/ is vendored and is nobody here's code to correct.
+  //
+  // oxlint rather than ESLint, on purpose. This project has no package.json, no node_modules and
+  // no build step -- Bootstrap is vendored rather than installed -- and adding a dependency tree
+  // to lint 1600 lines would cost more than the linting is worth. oxlint is a single binary,
+  // pinned by exact version in the `lint-js` job of .github/workflows/tests.yml, and leaves
+  // nothing behind in the tree but this file.
+  //
+  // The selection follows the same logic as ruff's in pyproject.toml: rules that catch mistakes,
+  // not rules that argue about taste. Every one below is here because it would have caught a bug
+  // that is plausible in *this* file, and the ones deliberately left off are listed at the end
+  // with the reason -- so a future run that turns them on knows what it is overruling.
+  "env": {
+    "browser": true,
+    "es2022": true
+  },
+  "globals": {
+    // The one global this page relies on, from the vendored bundle in app/static/vendor. Naming
+    // it here is the point: no-undef is only useful if the legitimate globals are declared, and
+    // this is now the written record that the app depends on exactly one.
+    "bootstrap": "readonly"
+  },
+  "ignorePatterns": [
+    // Belt and braces, not load-bearing: oxlint already skips *.min.js, so removing this line
+    // changes nothing today. It is here to state the boundary -- app/static/vendor is somebody
+    // else's code -- so that a future unminified vendored file does not quietly start being
+    // linted against rules written for ours.
+    "app/static/vendor/**"
+  ],
+  "rules": {
+    // A typo'd global is the failure this file is most exposed to: `windwo.location` is valid
+    // JavaScript that fails only when the line is reached, which for a rarely-taken branch can
+    // be a long time after it shipped.
+    "no-undef": "error",
+    // app.js opens with ~60 getElementById lookups. When markup is removed, the reference to it
+    // is what gets left behind, and it is invisible: the id simply stops resolving.
+    "no-unused-vars": "error",
+    // None of these appear today. The rules are here to keep it that way rather than to fix
+    // anything -- which is the cheapest moment to adopt them.
+    "eqeqeq": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    // The whole of app.js is wrapped in an IIFE precisely so it adds nothing to `window`. This
+    // is that intent, enforced.
+    "no-implicit-globals": "error",
+    // A shadowed name in a file this long reads as the outer one until it does not.
+    "no-shadow": "error"
+  }
+  // Considered and deliberately off, each because it argues with a decision already made:
+  //
+  //   unicorn/consistent-function-scoping -- wants the small helpers hoisted out of the IIFE,
+  //     which is the encapsulation the IIFE exists to provide.
+  //   no-await-in-loop -- the whois lookups are batched and sequential on purpose; running them
+  //     in parallel is what the batching is avoiding.
+  //   unicorn/no-array-sort -- the one sort() call is already operating on a spread copy, so
+  //     there is no mutation to protect against.
+}

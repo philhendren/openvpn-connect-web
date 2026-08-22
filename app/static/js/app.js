@@ -408,9 +408,9 @@
     const notes = Array.isArray(report.notes) ? report.notes : [];
     if (rejectedNotes) {
       rejectedNotes.hidden = !notes.length;
-      rejectedNotes.replaceChildren(...notes.map((text) => {
+      rejectedNotes.replaceChildren(...notes.map((note) => {
         const li = document.createElement("li");
-        li.textContent = text;
+        li.textContent = note;
         return li;
       }));
     }
