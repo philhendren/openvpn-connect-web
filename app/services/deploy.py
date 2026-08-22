@@ -223,6 +223,40 @@ def env_file_damage(path: Path) -> DriftItem | None:
 # --- the report --------------------------------------------------------------
 
 
+def client_drift(clients) -> DriftItem | None:
+    """Is the client this panel drives actually installed?
+
+    Worth a banner rather than a comment in a log: the failure without it arrives at the first
+    connect, as a helper that cannot start a binary that is not there, which reads as a broken
+    panel rather than as a missing package. The ``openvpn3``-only case gets its own wording
+    because "install openvpn" is confusing advice to somebody who can see an OpenVPN on their
+    PATH already.
+    """
+    if clients is None or clients.supported:
+        return None
+    if clients.v3_only:
+        return DriftItem(
+            kind="client",
+            headline="Only OpenVPN 3 is installed, and this panel cannot drive it.",
+            detail=(
+                f"{clients.v3} is on this machine, but the classic openvpn client is not. This "
+                "panel drives the classic client over OpenVPN's management interface -- the "
+                "socket its state, byte counters, log and credential prompts all come from -- "
+                "and OpenVPN 3 does not provide one. The two can be installed side by side."
+            ),
+            fix="sudo ./install_prerequisites.sh",
+        )
+    return DriftItem(
+        kind="client",
+        headline="No OpenVPN client is installed.",
+        detail=(
+            "Nothing on PATH, or in the usual sbin directories, answers to openvpn. Nothing can "
+            "connect until the classic client is installed."
+        ),
+        fix="sudo ./install_prerequisites.sh",
+    )
+
+
 def report(
     *,
     config,
@@ -230,9 +264,12 @@ def report(
     source_root: Path,
     migrations_dir: Path,
     started_at: float,
+    clients=None,
 ) -> DeployReport:
     """Every check, in the order the operator would act on them. Never raises."""
     checks = (
+        # First, because nothing else matters if the binary is missing.
+        lambda: client_drift(clients),
         lambda: helper_drift(
             installed=config.HELPER,
             template=source_root / "deploy" / "vpn-connect-helper.in",

@@ -8,6 +8,7 @@ import time
 import pytest
 
 from app.services import deploy
+from app.services.clients import Clients
 
 TEMPLATE = 'HELPER_VERSION="@HELPER_VERSION@"\nset -euo pipefail\n'
 
@@ -129,6 +130,33 @@ def test_output_that_is_not_a_setting_is_reported(tmp_path):
 def test_a_missing_env_file_is_not_reported(tmp_path):
     """A checkout run without systemd has no environment file, and that is not damage."""
     assert deploy.env_file_damage(tmp_path / "absent.env") is None
+
+
+# --- the client this panel drives ---------------------------------------------
+
+
+def test_the_installed_client_is_not_drift():
+    assert deploy.client_drift(Clients(classic="/usr/sbin/openvpn", v3=None)) is None
+
+
+def test_no_client_at_all_is_reported():
+    item = deploy.client_drift(Clients(classic=None, v3=None))
+    assert item is not None
+    assert "No OpenVPN client" in item.headline
+
+
+def test_openvpn3_alone_gets_its_own_wording():
+    """ "Install openvpn" is confusing advice to somebody who can see an OpenVPN on their PATH."""
+    item = deploy.client_drift(Clients(classic=None, v3="/usr/bin/openvpn3"))
+    assert item is not None
+    assert "OpenVPN 3" in item.headline
+    assert "management interface" in item.detail
+    assert "/usr/bin/openvpn3" in item.detail
+
+
+def test_a_report_with_no_client_survey_says_nothing_about_it():
+    """The check is advice; a caller that has not looked must not produce a false alarm."""
+    assert deploy.client_drift(None) is None
 
 
 # --- the whole report --------------------------------------------------------

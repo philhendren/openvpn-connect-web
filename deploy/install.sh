@@ -164,7 +164,18 @@ UV="${UV:-$(sudo -u "$VPN_OWNER" -H bash -lc 'command -v uv' || true)}"
 
 [[ $EUID -eq 0 ]] || { echo "Run this with sudo." >&2; exit 1; }
 [[ -n "$UV" ]] || { echo "Cannot find uv for $VPN_OWNER — set UV=/path/to/uv." >&2; exit 1; }
-[[ -x "$OPENVPN" ]] || { echo "openvpn not found at $OPENVPN." >&2; exit 1; }
+if [[ ! -x "$OPENVPN" ]]; then
+    echo "openvpn not found at $OPENVPN." >&2
+    # Worth saying explicitly: to somebody who has openvpn3 installed, "openvpn not found" reads
+    # as a broken installer rather than as a different program.
+    if command -v openvpn3 >/dev/null 2>&1; then
+        echo "An OpenVPN 3 client ($(command -v openvpn3)) is installed, but this panel drives" >&2
+        echo "the classic openvpn client over OpenVPN's management interface, which OpenVPN 3" >&2
+        echo "does not provide. They can be installed side by side." >&2
+    fi
+    echo "Run ./install_prerequisites.sh, or set OPENVPN=/path/to/openvpn." >&2
+    exit 1
+fi
 [[ -d "$VPN_DIR" ]] || { echo "VPN directory $VPN_DIR does not exist." >&2; exit 1; }
 
 # Hashed with the placeholder still in it, so the app can recompute exactly this value from the
