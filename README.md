@@ -113,7 +113,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-**What I would say in its defence:** the tests are real (717, and they never touch the real system —
+**What I would say in its defence:** the tests are real (751, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout, and a further suite drives the
 page in a real browser), the privilege boundary is narrow and deliberate (one root helper, a fixed
 set of verbs, no caller-supplied paths or content crossing into root), and several of the bugs
@@ -859,6 +859,29 @@ The screenshots in [USAGE.md](USAGE.md) are build artefacts, like the icons: reg
 `uv run --group screenshots python tools/screenshots.py`, which seeds a throwaway installation,
 serves it with a stub in place of the tunnel and photographs it. Playwright sits in its own
 dependency group, so neither a normal install nor CI ever downloads it.
+
+### Releases
+
+Cut one from the Actions tab: **Release → Run workflow**, choose `patch`, `minor` or `major`, and
+that is the whole flow. There is nothing to run locally, no version to edit by hand, and no
+changelog file to keep current — the notes are generated from the pull requests since the previous
+tag.
+
+The version arithmetic lives in [`tools/next_version.py`](tools/next_version.py) with tests beside
+it, rather than in the workflow, because a pushed tag somebody has already fetched is the one thing
+here that cannot be taken back by another commit. Three rules:
+
+- **The first release** takes the version from `pyproject.toml` unbumped — a project that declared
+  itself 0.1.0 and never released should ship as `v0.1.0`, not `v0.1.1`.
+- **After that** the highest existing tag is bumped by whichever part you chose. Tags are the
+  source of truth from then on; `pyproject.toml` is only ever the seed.
+- **An exact version** can be given instead, which overrides the bump — for a `1.0.0` that is a
+  decision rather than an increment. It is refused if it is not ahead of the latest tag.
+
+`dry_run` works the version out and stops, which is the safe way to see what a run would do. The
+workflow refuses to run anywhere but `main`, and refuses to move a tag that already exists. **It
+only ever writes tags** — never a commit to `main`, so it keeps working the day branch protection
+is turned on.
 
 The suite runs with **deliberately cheap scrypt parameters** — at production cost the fixtures spend
 about a minute deriving keys nobody looks at. `SCRYPT_N_PRODUCTION` and
