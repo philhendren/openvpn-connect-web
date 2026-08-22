@@ -1,0 +1,72 @@
+# Drives the real page in a real browser, which is the one thing tests.yml cannot do.
+#
+# Its own workflow rather than a third job in tests.yml: this one needs a browser download, has
+# its own cache, and fails for its own reasons. Keeping it separate means a red tick here says
+# "the page stopped keeping a promise" rather than "something, somewhere, in the tests".
+#
+# Every scenario under uitests/ defends a sentence in README.md, USAGE.md or a module docstring.
+# That is the selection rule, and it is what stops this suite growing into a second, slower copy
+# of tests.yml: if no documentation makes the claim, it does not belong here.
+
+name: journeys
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  journeys:
+    name: journeys (Chromium)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          cache-suffix: ui   # its own key, for the reason given in tests.yml
+
+      # --frozen, like everywhere else: uv.lock is committed and CI must fail on a lockfile that
+      # no longer matches pyproject.toml rather than resolving something newer and testing that.
+      - name: Install dependencies
+        run: uv sync --frozen --group ui
+
+      # Keyed on the lockfile, so the browser is re-downloaded exactly when uv.lock moves
+      # playwright and never otherwise. Restored, this step is a few seconds.
+      - name: Cache the browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+
+      - name: Install Chromium
+        run: uv run --frozen playwright install --with-deps chromium
+
+      # Empty VPN_UI_CHANNEL selects Playwright's own Chromium over system Chrome. A developer
+      # locally gets Chrome by default -- the browser they already have, and the one the
+      # screenshots are taken with -- but CI wants the build pinned by uv.lock, so that a
+      # scenario going red is this repository changing rather than a runner image changing.
+      - name: Run the journeys
+        env:
+          VPN_UI_CHANNEL: ""
+        run: uv run --frozen pytest uitests/ -q
+
+      # A failed journey is a DOM and a network log, not a stack trace. Without this the only way
+      # to read a red run is to reproduce it locally, which is how a browser suite becomes a
+      # thing people re-run rather than fix.
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: journey-traces
+          path: uitests/artifacts/
+          retention-days: 14
+          if-no-files-found: ignore

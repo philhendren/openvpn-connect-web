@@ -22,6 +22,14 @@ dev = [
 screenshots = [
     "playwright>=1.40",
 ]
+# The browser journeys under uitests/. Its own group rather than a share of `screenshots` above:
+# they are separate things that happen to want the same driver -- one is a build tool for the
+# documentation, the other is a test suite with a workflow of its own -- and the redundancy is
+# cheaper than a group whose name stops describing what asks for it.
+#   uv run --group ui pytest uitests/
+ui = [
+    "playwright>=1.40",
+]
 
 [tool.ruff]
 line-length = 100
@@ -37,6 +45,8 @@ ignore = ["S101"]
 # Invented credentials for a database that lives in /tmp for thirty seconds, and a *seeded* RNG so
 # the fake traffic graph comes out identical every time the screenshots are regenerated.
 "tools/screenshots.py" = ["S105", "S106", "S311"]
+# Browser tests: the same fixture-credential exemption the unit tests get.
+"uitests/*" = ["S105", "S106", "S107"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
