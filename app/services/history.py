@@ -90,7 +90,18 @@ class History:
         except Exception:  # noqa: BLE001
             log.exception("could not write %d log lines", len(pending))
 
-    def end_session(self, outcome: str) -> None:
+    def mark_connected(self) -> None:
+        """Record that the attempt being logged reached CONNECTED."""
+        with self._lock:
+            session_id = self._session_id
+        if session_id is None:
+            return
+        try:
+            store.mark_session_connected(self._db, session_id)
+        except Exception:  # noqa: BLE001
+            log.exception("could not mark the log session connected")
+
+    def end_session(self, outcome: str, reason: str = "") -> None:
         self.flush()
         with self._lock:
             session_id = self._session_id
@@ -98,7 +109,7 @@ class History:
         if session_id is None:
             return
         try:
-            store.end_log_session(self._db, session_id, outcome)
+            store.end_log_session(self._db, session_id, outcome, reason)
         except Exception:  # noqa: BLE001
             log.exception("could not close the log session")
 
@@ -135,6 +146,14 @@ class History:
             return store.recent_sessions(self._db, limit)
         except Exception:  # noqa: BLE001
             log.exception("could not list log sessions")
+            return []
+
+    def sessions(self) -> list[dict[str, object]]:
+        """Every attempt still inside the retention window, newest first."""
+        try:
+            return store.list_sessions(self._db)
+        except Exception:  # noqa: BLE001
+            log.exception("could not read the session history")
             return []
 
     def session_lines(self, session_id: int, limit: int = 500) -> list[str]:

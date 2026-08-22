@@ -138,6 +138,11 @@ class OpenVpnController:
         self._shutdown_requested = False
         #: Captured when an attempt starts, for the management auth exchange.
         self._username_for_auth = ""
+        #: Counts connection attempts, so a worker thread can tell whether it is still the one
+        #: that matters. Reconnecting quickly leaves the previous worker briefly alive, and
+        #: without this it tidies up -- clearing the pending credential, reporting its own
+        #: timeout -- on top of the attempt that replaced it.
+        self._attempt = 0
 
     # -- public API -------------------------------------------------------
 
@@ -223,9 +228,10 @@ class OpenVpnController:
             self._settled.clear()
             self._shutdown_requested = False
             self._notified_up = False
+            self._attempt += 1
             self._worker = threading.Thread(
                 target=self._connect_worker,
-                args=(resolved, otp),
+                args=(resolved, otp, self._attempt),
                 name="vpn-connect",
                 daemon=True,
             )
@@ -302,7 +308,7 @@ class OpenVpnController:
 
     # -- connect worker ---------------------------------------------------
 
-    def _connect_worker(self, resolved: Resolved, otp: str) -> None:
+    def _connect_worker(self, resolved: Resolved, otp: str, attempt: int) -> None:
         # SCRV1 is the static-challenge response format. Sending it to a server that never asked
         # for a challenge would fail authentication with a password the operator knows is right,
         # so a profile without one gets the password exactly as stored.
@@ -328,15 +334,34 @@ class OpenVpnController:
                 raise VpnError("Timed out waiting for the tunnel to come up.")
             self._raise_if_failed()
         except (VpnError, ManagementError) as exc:
+            if self._superseded(attempt):
+                return
             self._fail(str(exc))
             self._abort_daemon()
         except Exception as exc:  # noqa: BLE001 - worker thread must never die silently
             log.exception("unexpected failure while connecting")
+            if self._superseded(attempt):
+                return
             self._fail(f"Unexpected failure: {exc}")
             self._abort_daemon()
         finally:
-            self._pending_secret = None
+            # Only if this worker still owns the attempt. A superseded one arriving here would
+            # otherwise wipe the credential the *new* attempt is waiting to answer its prompt
+            # with, and the new attempt would fail with "none were pending".
+            with self._lock:
+                if self._attempt == attempt:
+                    self._pending_secret = None
             del secret
+
+    def _superseded(self, attempt: int) -> bool:
+        """Has a newer attempt started since this worker began?
+
+        A worker that has been replaced must stay quiet: its timeout, its torn-down daemon and
+        its failure message all belong to a connection nobody is waiting for any more, and
+        reporting them fails the attempt that replaced it.
+        """
+        with self._lock:
+            return self._attempt != attempt
 
     def _abort_daemon(self) -> None:
         """Tear down a half-started daemon so a failed attempt leaves nothing stuck.
@@ -525,27 +550,39 @@ class OpenVpnController:
             return
 
         kind: str | None = None
+        event = ""
+        reason = ""
         if after == CONNECTED and not self._notified_up:
             self._notified_up = True
             kind, event, reason = "up", "UP", ""
         elif before in (CONNECTED, DISCONNECTING) and after in (DISCONNECTED, FAILED, UNMANAGED):
-            if not self._notified_up:
-                return  # an attempt that never came up is not a tunnel going down
-            self._notified_up = False
-            requested = self._shutdown_requested
-            self._shutdown_requested = False
-            kind = "down_manual" if requested else "down_severed"
-            event = "DOWN"
-            reason = "operator-requested" if requested else "link-lost"
+            # An attempt that never came up is not a tunnel going down, so it notifies nothing --
+            # but it is still an attempt, and closing its log is not a notification decision.
+            if self._notified_up:
+                self._notified_up = False
+                requested = self._shutdown_requested
+                self._shutdown_requested = False
+                kind = "down_manual" if requested else "down_severed"
+                event = "DOWN"
+                reason = "operator-requested" if requested else "link-lost"
+
+        # Flush the log buffer before anything else, so a failed attempt's tail is already
+        # stored by the time the history it belongs to is readable.
+        self._history.flush()
+        if after == CONNECTED:
+            # The one place that knows a tunnel actually came up. Recorded now because nothing
+            # in the row can answer it afterwards, and "failed" and "dropped" are not the same
+            # thing to anybody reading a week of attempts back.
+            self._history.mark_connected()
+        elif after in (DISCONNECTED, FAILED, UNMANAGED):
+            # `reason` is empty unless this was a tunnel going down, which is exactly right: a
+            # connect that failed at the credential prompt did not end for either of the two
+            # reasons a live tunnel ends for.
+            self._history.end_session("failed" if after == FAILED else "disconnected", reason)
 
         if kind is None:
             return
 
-        # Flush the log buffer before recording the event, so a failed attempt's tail is
-        # already stored by the time anything reads the history it belongs to.
-        self._history.flush()
-        if after in (DISCONNECTED, FAILED, UNMANAGED):
-            self._history.end_session("failed" if after == FAILED else "disconnected")
         self._write_event(event, reason)
         if self._notifier is None:
             return

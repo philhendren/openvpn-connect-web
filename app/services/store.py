@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.db import transaction
@@ -26,7 +26,12 @@ NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 #: Keep the log bounded: a chatty reconnect loop should not grow the database without limit.
 MAX_LINES_PER_SESSION = 2000
-KEEP_SESSIONS = 50
+
+#: How long a connection attempt is kept. Age is what the history is described by -- "the last
+#: week" -- so age is what is enforced; the count is only a backstop against a reconnect loop
+#: filling the disk in less than a week, and at any sane rate of connecting it never binds.
+RETENTION_DAYS = 7
+KEEP_SESSIONS = 200
 
 #: Byte counters arrive every few seconds; this is roughly a day of them at OpenVPN's default
 #: interval, which is longer than the concentrator will keep a session alive anyway.
@@ -514,6 +519,44 @@ def recent_events(conn: sqlite3.Connection, limit: int = 10) -> list[str]:
 # --- log sessions ----------------------------------------------------------
 
 
+def window_start(days: int = RETENTION_DAYS, now: datetime | None = None) -> str:
+    """The oldest moment the history reaches back to, in the same format the rows use."""
+    moment = now or datetime.now().astimezone()
+    return (moment - timedelta(days=days)).isoformat(timespec="seconds")
+
+
+def _in_window(alias: str = "") -> str:
+    """SQL for "this session is inside the retention window", taking the cutoff as a parameter.
+
+    Inside means it *ended* inside the window -- or has not ended at all. Deliberately not
+    "started inside it": an attempt that began eight days ago and ended yesterday is a session
+    you were in for most of the last week, and cutting it off at the boundary would report a
+    nine-hour tunnel as a one-hour one. A session is kept whole, back to its beginning, or not
+    at all, so the history is *at least* seven days and occasionally a little more.
+
+    Written once and used twice, by the reader and by the sweep, because a window the two
+    disagreed about would show rows that the next connect silently deleted.
+    """
+    column = f"{alias}.ended_at" if alias else "ended_at"
+    return f"({column} IS NULL OR julianday({column}) >= julianday(?))"
+
+
+# Built once each from that predicate, so the reader and the sweep cannot drift apart. The
+# interpolation is the constant above and nothing else -- the cutoff itself is bound as a
+# parameter, like every other value in this file -- which is why the injection check is silenced
+# here by name rather than left to be ignored by eye.
+_LIST_SESSIONS = (
+    "SELECT s.id, s.connection, s.started_at,"  # noqa: S608
+    " s.connected_at, s.ended_at, s.outcome, s.reason,"
+    " (SELECT COUNT(*) FROM log_lines l WHERE l.session_id = s.id) AS lines,"
+    " (SELECT MAX(t.bytes_in) FROM traffic_samples t WHERE t.session_id = s.id) AS bytes_in,"
+    " (SELECT MAX(t.bytes_out) FROM traffic_samples t WHERE t.session_id = s.id) AS bytes_out"
+    f" FROM log_sessions s WHERE {_in_window('s')} ORDER BY s.id DESC LIMIT ?"
+)
+
+_SWEEP_SESSIONS = f"DELETE FROM log_sessions WHERE NOT {_in_window()}"  # noqa: S608
+
+
 def start_log_session(conn: sqlite3.Connection, connection: str | None) -> int:
     with transaction(conn):
         cursor = conn.execute(
@@ -543,11 +586,29 @@ def append_lines(conn: sqlite3.Connection, session_id: int, lines: list[str]) ->
         )
 
 
-def end_log_session(conn: sqlite3.Connection, session_id: int, outcome: str) -> None:
+def end_log_session(
+    conn: sqlite3.Connection, session_id: int, outcome: str, reason: str = ""
+) -> None:
+    """Close an attempt. ``reason`` is the controller's own verdict on *why* it ended."""
     with transaction(conn):
         conn.execute(
-            "UPDATE log_sessions SET ended_at = ?, outcome = ? WHERE id = ?",
-            (_now(), outcome, session_id),
+            "UPDATE log_sessions SET ended_at = ?, outcome = ?, reason = ? WHERE id = ?",
+            (_now(), outcome, reason, session_id),
+        )
+
+
+def mark_session_connected(conn: sqlite3.Connection, session_id: int) -> None:
+    """Record that this attempt reached CONNECTED, and when.
+
+    Written the moment it happens rather than inferred afterwards: whether a tunnel came up is
+    the difference between "failed twice" and "dropped twice", and nothing else in the row can
+    tell them apart once the process is gone. Only the first transition counts, so a re-adopted
+    tunnel cannot restart its own clock.
+    """
+    with transaction(conn):
+        conn.execute(
+            "UPDATE log_sessions SET connected_at = ? WHERE id = ? AND connected_at IS NULL",
+            (_now(), session_id),
         )
 
 
@@ -570,14 +631,50 @@ def recent_sessions(conn: sqlite3.Connection, limit: int = 10) -> list[dict[str,
     return [dict(row) for row in rows]
 
 
-def prune_sessions(conn: sqlite3.Connection, keep: int = KEEP_SESSIONS) -> int:
-    """Drop all but the newest ``keep`` sessions. Lines go with them via ON DELETE CASCADE."""
+def list_sessions(
+    conn: sqlite3.Connection,
+    *,
+    days: int = RETENTION_DAYS,
+    limit: int = KEEP_SESSIONS,
+    now: datetime | None = None,
+) -> list[dict[str, object]]:
+    """Every attempt inside the retention window, newest first, with what it moved.
+
+    Filtered on read as well as swept on write, because the sweep only runs when a new attempt
+    starts: on a machine that has not connected for a fortnight the rows are still there, and a
+    panel that showed them would be quietly contradicting its own "last seven days" heading.
+
+    Byte totals are the *largest* reading rather than the last one. OpenVPN's counters are
+    cumulative for the life of the tunnel, so the largest is the total; taking the last would
+    under-report an attempt whose counter was reset underneath us, which is the same
+    going-backwards case :mod:`app.services.traffic` guards when it draws the graph.
+    """
+    rows = conn.execute(_LIST_SESSIONS, (window_start(days, now), limit)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def prune_sessions(
+    conn: sqlite3.Connection,
+    keep: int = KEEP_SESSIONS,
+    *,
+    days: int = RETENTION_DAYS,
+    now: datetime | None = None,
+) -> int:
+    """Drop sessions that have fallen out of the retention window, newest ``keep`` regardless.
+
+    Two rules, and the age one is the point: anything that ended before the cutoff goes, and a
+    session still in progress is never touched however long it has been up. The count is the
+    backstop described at :data:`KEEP_SESSIONS`. Lines and traffic samples go with the row via
+    ON DELETE CASCADE, so retention needs no separate sweep for either.
+    """
     with transaction(conn):
-        return conn.execute(
+        aged = conn.execute(_SWEEP_SESSIONS, (window_start(days, now),)).rowcount
+        excess = conn.execute(
             "DELETE FROM log_sessions WHERE id NOT IN ("
             "  SELECT id FROM log_sessions ORDER BY id DESC LIMIT ?)",
             (keep,),
         ).rowcount
+    return aged + excess
 
 
 # --- traffic samples -------------------------------------------------------

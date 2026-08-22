@@ -6,7 +6,7 @@ from flask import Blueprint, current_app, jsonify, request
 
 from app.auth import login_required, validate_csrf
 from app.db import MIGRATIONS_DIR, schema_version
-from app.services import deploy, store
+from app.services import deploy, sessions, store
 from app.services.dns import DnsError
 from app.services.notifications import NotifyDeliveryError
 from app.services.notify import (
@@ -411,6 +411,40 @@ def traffic():
     points = max(10, min(points, 2000))
     payload = series(history.samples(requested), points).to_dict()
     return jsonify(session=requested, live=requested == history.session_id, **payload)
+
+
+@bp.get("/sessions")
+@login_required
+def session_history():
+    """Connection attempts inside the retention window, searchable and paged by session.
+
+    There is no date filter and no ``from``/``to``, on purpose. The question this panel exists
+    to answer -- does this tunnel stay up? -- is asked in attempts ("the last twenty-five", "the
+    ones that dropped"), and a date range on a machine that was switched off for two of the
+    seven days answers it with an empty table and no explanation.
+
+    The summary always covers the whole retained window rather than the page or the search:
+    "three drops" means nothing without three out of how many, and a total that changed as you
+    typed would be worse than no total at all.
+    """
+    history = current_app.config["HISTORY"]
+    entries = sessions.from_rows(history.sessions(), live_id=history.session_id)
+    query = str(request.args.get("q") or "").strip()
+    matched = sessions.search(entries, query)
+    window, following = sessions.page(
+        matched,
+        before=request.args.get("before", type=int),
+        limit=request.args.get("limit", type=int) or sessions.DEFAULT_LIMIT,
+    )
+    return jsonify(
+        window_days=store.RETENTION_DAYS,
+        retained=len(entries),
+        matched=len(matched),
+        query=query,
+        summary=sessions.summarise(entries).to_dict(),
+        sessions=[session.to_dict() for session in window],
+        next=following,
+    )
 
 
 @bp.get("/logs")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import stat
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -259,6 +260,163 @@ def test_recent_sessions_reports_line_counts(db):
     session = store.start_log_session(db, "examplecorp")
     store.append_lines(db, session, ["a", "b", "c"])
     assert store.recent_sessions(db)[0]["lines"] == 3
+
+
+# --- session history and retention -----------------------------------------
+#
+# Every timestamp here is written by hand rather than waited for: the rules being tested are
+# about days, and a test that could only be run by leaving the machine on for a week is a test
+# that never runs.
+
+
+def _dated_session(
+    db,
+    *,
+    started: str,
+    ended: str | None = None,
+    connected: str | None = None,
+    connection: str = "client",
+    outcome: str = "disconnected",
+    reason: str = "",
+) -> int:
+    """A session placed at a chosen moment in the past."""
+    session = store.start_log_session(db, connection)
+    db.execute(
+        "UPDATE log_sessions SET started_at = ?, connected_at = ?, ended_at = ?, outcome = ?,"
+        " reason = ? WHERE id = ?",
+        (started, connected, ended, outcome, reason, session),
+    )
+    db.commit()
+    return session
+
+
+def _ago(**delta) -> str:
+    return (datetime.now().astimezone() - timedelta(**delta)).isoformat(timespec="seconds")
+
+
+def test_a_session_records_when_it_came_up(db):
+    session = store.start_log_session(db, "examplecorp")
+    store.mark_session_connected(db, session)
+    assert store.list_sessions(db)[0]["connected_at"] is not None
+
+
+def test_an_attempt_that_never_came_up_has_no_connected_time(db):
+    """The distinction the whole panel turns on: failed twice is not dropped twice."""
+    store.start_log_session(db, "examplecorp")
+    assert store.list_sessions(db)[0]["connected_at"] is None
+
+
+def test_coming_up_again_does_not_restart_the_clock(db):
+    """Re-adopting a running tunnel re-announces CONNECTED; the tunnel is no younger for it."""
+    session = store.start_log_session(db, "examplecorp")
+    store.mark_session_connected(db, session)
+    first = store.list_sessions(db)[0]["connected_at"]
+    store.mark_session_connected(db, session)
+    assert store.list_sessions(db)[0]["connected_at"] == first
+
+
+def test_ending_a_session_records_why(db):
+    session = store.start_log_session(db, "examplecorp")
+    store.end_log_session(db, session, "disconnected", "link-lost")
+    row = store.list_sessions(db)[0]
+    assert (row["outcome"], row["reason"]) == ("disconnected", "link-lost")
+
+
+def test_a_session_that_ends_without_a_reason_stores_an_empty_one(db):
+    session = store.start_log_session(db, "examplecorp")
+    store.end_log_session(db, session, "failed")
+    assert store.list_sessions(db)[0]["reason"] == ""
+
+
+def test_the_history_reports_what_each_session_carried(db):
+    session = store.start_log_session(db, "client")
+    store.record_sample(db, session, 1.0, 1024, 512)
+    store.record_sample(db, session, 2.0, 4096, 2048)
+    store.append_lines(db, session, ["a", "b"])
+    row = store.list_sessions(db)[0]
+    assert (row["bytes_in"], row["bytes_out"], row["lines"]) == (4096, 2048, 2)
+
+
+def test_a_counter_that_went_backwards_still_reports_the_peak(db):
+    """Cumulative counters, so the largest reading is the total -- taking the last would
+    under-report an attempt whose counter was reset underneath it."""
+    session = store.start_log_session(db, "client")
+    store.record_sample(db, session, 1.0, 9000, 9000)
+    store.record_sample(db, session, 2.0, 12, 12)
+    row = store.list_sessions(db)[0]
+    assert (row["bytes_in"], row["bytes_out"]) == (9000, 9000)
+
+
+def test_a_session_with_no_samples_reports_nothing_rather_than_failing(db):
+    store.start_log_session(db, "client")
+    assert store.list_sessions(db)[0]["bytes_in"] is None
+
+
+def test_the_history_is_newest_first(db):
+    _dated_session(db, started=_ago(days=2), ended=_ago(days=2))
+    _dated_session(db, started=_ago(hours=1), ended=_ago(minutes=30))
+    assert [row["id"] for row in store.list_sessions(db)] == [2, 1]
+
+
+def test_the_history_stops_at_the_retention_window(db):
+    """Filtered on read as well as swept on write: the sweep only runs when a new attempt
+    starts, so a machine that has not connected for a fortnight still has the rows."""
+    _dated_session(db, started=_ago(days=9), ended=_ago(days=8))
+    _dated_session(db, started=_ago(days=1), ended=_ago(hours=23))
+    assert [row["id"] for row in store.list_sessions(db)] == [2]
+
+
+def test_a_session_that_outlived_the_window_is_kept_whole(db):
+    """Eight days is fine. A session that began before the cutoff and ended inside it is kept
+    back to its beginning -- truncating it would report a long tunnel as a short one."""
+    began = _ago(days=8)
+    session = _dated_session(db, started=began, ended=_ago(days=1))
+    assert [row["id"] for row in store.list_sessions(db)] == [session]
+    assert store.list_sessions(db)[0]["started_at"] == began
+
+
+def test_a_session_still_running_is_never_out_of_the_window(db):
+    _dated_session(db, started=_ago(days=30), ended=None)
+    assert len(store.list_sessions(db)) == 1
+
+
+def test_the_sweep_deletes_what_fell_out_of_the_window(db):
+    old = _dated_session(db, started=_ago(days=10), ended=_ago(days=9))
+    store.append_lines(db, old, ["gone"])
+    store.record_sample(db, old, 1.0, 1, 1)
+    kept = _dated_session(db, started=_ago(days=2), ended=_ago(days=2))
+
+    assert store.prune_sessions(db) == 1
+    assert [row["id"] for row in store.list_sessions(db)] == [kept]
+    assert db.execute("SELECT COUNT(*) FROM log_lines").fetchone()[0] == 0
+    assert db.execute("SELECT COUNT(*) FROM traffic_samples").fetchone()[0] == 0
+
+
+def test_the_sweep_keeps_a_session_that_reaches_back_past_the_cutoff(db):
+    _dated_session(db, started=_ago(days=8), ended=_ago(days=1))
+    assert store.prune_sessions(db) == 0
+    assert len(store.list_sessions(db)) == 1
+
+
+def test_the_sweep_never_closes_over_a_session_in_progress(db):
+    """A tunnel that has been up for a fortnight is the one you least want to lose the log of."""
+    _dated_session(db, started=_ago(days=14), ended=None)
+    assert store.prune_sessions(db) == 0
+    assert len(store.list_sessions(db)) == 1
+
+
+def test_the_window_is_measured_in_days_not_rows(db):
+    _dated_session(db, started=_ago(days=3), ended=_ago(days=3))
+    assert store.prune_sessions(db, days=1) == 1
+    assert store.list_sessions(db) == []
+
+
+def test_the_count_backstop_still_bounds_a_reconnect_loop(db):
+    """Age is the rule; the count is what stops a loop filling the disk in less than a week."""
+    for _ in range(5):
+        _dated_session(db, started=_ago(minutes=5), ended=_ago(minutes=4))
+    assert store.prune_sessions(db, keep=2) == 3
+    assert len(store.list_sessions(db)) == 2
 
 
 # --- traffic samples -------------------------------------------------------
