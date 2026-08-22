@@ -25,16 +25,73 @@ to all of those was "SSH back in and go digging".
 So this is a web page for that box, openable from a phone or a laptop on the same network. Nothing
 here is novel; it exists because the alternative was another terminal window.
 
-Two consequences of that origin worth knowing before you adopt it:
+### Why the tunnel lives on that box and not on my laptop
+
+I work on a Chromebook every day. The Linux environment there is Crostini — a container — and
+VPNs inside it are a poor fit: connecting is not reliably clean, and the GUI you get for managing
+one is close to useless. It is enough to turn something on. It is nowhere near enough to tell you
+what turning it on actually did.
+
+The bigger reason, though, is that **I do not want my personal laptop on the corporate LAN at
+all.** Joining a work network puts the entire machine inside somebody else's perimeter — their
+routes, their DNS, their visibility — for the sake of reaching a handful of internal services.
+That is a bad trade on a machine that is also my own.
+
+So the tunnel stays on the headless box, and nothing else follows it there:
+
+```
+Chromebook (Crostini) ──SOCKS──> headless box ──OpenVPN──> corporate network
+        │                        (this panel runs here)
+        └── Proxy SwitchyOmega decides which hostnames take that path;
+            everything else leaves the laptop normally
+```
+
+A SOCKS proxy from the Crostini container to the headless box, and Proxy SwitchyOmega in the
+browser routing by hostname: internal domains — the ones the VPN is actually *for* — go over the
+proxy and out through the tunnel, and everything else goes straight out as it always did.
+Exactly one machine is on the corporate network, on purpose, and it is not the one I work on.
+
+That split is only comfortable if you can see what the tunnel at the far end is doing. Which is
+the other half of why this exists.
+
+### VPN clients tell you almost nothing
+
+Most VPN clients give you a button and a colour. *Connected.* Green. That is very nearly the whole
+of what they are prepared to say, and everything past it is trust — that the routes are what you
+assume, that DNS is not being quietly taken over, that "split tunnel" means what it sounded like
+when somebody said it in a meeting. Corporate clients tend to be the worst of them: they are built
+for the administrator, and the questions a person might reasonably ask about *their own machine*
+are simply not answerable from the interface.
+
+They are answerable questions, though, and the answers are sitting right there on the box:
+
+- What is this thing actually routing, and what is it leaving alone?
+- Did every route the server asked for actually get installed? (**Not** the same question — see
+  [Pushed, but not installed](#pushed-but-not-installed).)
+- Who is resolving my DNS right now, and can my employer see every domain I look up, including the
+  ones that are none of their business?
+- Is any of it escaping over IPv6 while the IPv4 side looks fine?
+- What happened at 3am when it dropped, and did it come back?
+
+So the panel is unapologetically an introspection tool. It reports what the kernel and
+systemd-resolved actually say, in plain language, and it is deliberately willing to tell you
+something you would rather not know. **The design bias throughout is *report what is true*, not
+what was configured.** The routes panel reads the kernel's routing table, not the server's
+`PUSH_REPLY`. The DNS panel reads systemd-resolved, not the pushed options. That distinction has
+repeatedly been the difference between a panel that reassures you and one that tells you your VPN
+provider can see every domain you visit — which is precisely what it told me, and is why
+[Ignore pushed DNS](#taking-dns-back--ignore-pushed-dns) exists at all.
+
+None of this is privileged information. It is just information nobody bothers to show you.
+
+### Before you adopt it
 
 - **It is deliberately single-machine and single-user.** It controls the local `openvpn` binary,
   not a fleet. There is one login, no user accounts, no multi-tenancy. It should never be exposed
   to the internet — put it on your LAN or behind a VPN of its own (yes, really).
-- **The design bias throughout is *report what is actually true*, not what was configured.** The
-  routes panel reads the kernel's routing table, not the server's `PUSH_REPLY`. The DNS panel reads
-  systemd-resolved, not the pushed options. That distinction has repeatedly been the difference
-  between a panel that reassures you and one that tells you your VPN provider can see every domain
-  you look up.
+- **It is an observer, not an enforcer.** It will tell you the tunnel is taking all your DNS; it
+  will not stop your employer configuring it that way. Where it can act, it says so plainly, and
+  where it cannot, it says that too.
 
 ## Vibe-coded, on purpose
 
@@ -43,7 +100,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-What I would say in its defence: the tests are real (612, and they never touch the real system —
+What I would say in its defence: the tests are real (712, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout), the privilege boundary is
 narrow and deliberate (one root helper, a fixed set of verbs, no caller-supplied paths or content
 crossing into root), and several of the bugs found along the way were the kind that hide from
