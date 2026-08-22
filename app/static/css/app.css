@@ -327,6 +327,12 @@ body { -webkit-font-smoothing: antialiased; }
 
 /* --- session history ----------------------------------------------------- */
 
+/* Unlike the routes table -- hundreds of rows, so a fixed viewport with its own scrollbar --
+   the history is at most a page of them, and a row expands *inside* the container to show its
+   log. A fixed 300px would clip that log mid-line, so this one grows with its content and only
+   starts scrolling when a busy week genuinely overflows it. */
+.sessions-scroll { height: auto; max-height: 34rem; }
+
 .sessions-table td { vertical-align: middle; }
 .sessions-table td:first-child { white-space: nowrap; }
 
