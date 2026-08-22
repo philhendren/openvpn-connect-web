@@ -2,9 +2,9 @@
 
 Two things this panel does not do yet, and what each would actually cost.
 
-Both are here because they were proposed, thought about, and *not started* — which is a different
-state from "unknown" and worth writing down as such. Neither is scheduled. This file exists so the
-reasoning survives, and so that picking either one up begins from what has already been worked out
+Both have been thought through and deliberately not started — which is a different state from
+"unknown", and worth writing down as such. Neither is scheduled. This file exists so that the
+reasoning survives, and so that picking either one up starts from what has already been worked out
 rather than from scratch.
 
 Settled decisions do not live here. Where something was considered and deliberately left alone —
@@ -16,7 +16,8 @@ holds the answers stops being a list of open questions.
 
 ## An OpenVPN 3 backend
 
-**Status:** not started, and not developable on the machine this project is written on.
+**Status:** not started. It cannot be written honestly without a machine running `openvpn3` to
+test against.
 
 ### What the problem actually is
 
@@ -40,8 +41,8 @@ adding a flag — it is a **second backend**, talking to a different API, produc
 `OpenVpnController` is already the only thing in the app that touches the tunnel; every view goes
 through `snapshot()`, `connect()`, `disconnect()`, `routes()`, `pushed()`, `scope()` and
 `recent_events()`. That surface is the seam. A second backend implements it and nothing above it
-changes — which is the one piece of good news here, and it is not an accident: the controller was
-kept thin for reasons that had nothing to do with OpenVPN 3.
+changes — which is the encouraging part, and it is not an accident: the controller was kept thin
+for reasons that had nothing to do with OpenVPN 3.
 
 Roughly what each command maps to:
 
@@ -76,10 +77,10 @@ Roughly what each command maps to:
 
 ### Why it is not started
 
-`openvpn3` is not installed on this machine and the classic client is what the tunnel actually
-runs on. A backend written blind against documentation, with no way to run it once, is not worth
-having — it would look finished and be untested in exactly the places that matter. The two clients
-install side by side without conflicting, so the honest first step is not code:
+Writing it needs a machine with `openvpn3` installed to develop against. A backend written blind
+from documentation, with no way to run it even once, is not worth having — it would look finished
+while being untested in exactly the places that matter. The two clients install side by side
+without conflicting, so the first step is not code:
 
 1. Install `openvpn3` alongside the classic client on a machine that can be experimented with.
 2. Drive it by hand — import a config, start a session, read the stats, disconnect — and record
@@ -91,18 +92,20 @@ and should be treated as such.
 
 ---
 
-## Tier 2 journey tests
+## Journey tests, for the things a person *does*
 
 **Status:** not started. Blocked on one specific thing, described below.
 
-### Where this came from
+### What is already covered, and what is not
 
-[`uitests/`](uitests/) covers what the README's Development section calls the Tier 1 promises:
-seven scenarios, each defending a sentence somebody can read in the documentation. Those are all
-**observations** — the page is loaded, and something about it is or is not true.
+The browser suite in [`uitests/`](uitests/) is seven scenarios, each defending a sentence somebody
+can read in the documentation. Every one of them is an **observation**: load the page, and check
+that something is true — a count, a hidden block, a field that appears for one profile and not
+another.
 
-Tier 2 is the other half: the things a person *does*. Multi-step, state-changing, and the ones a
-user would describe as "using the app" rather than "looking at it".
+None of them *change* anything. That is the gap: connecting, disconnecting, adding a connection
+and editing DNS rules are what a person would call "using the app" rather than "looking at it",
+and none of it is tested through a browser at all.
 
 | Journey | What it would prove |
 | --- | --- |
@@ -122,9 +125,9 @@ correct for that job.
 
 Every journey above needs the opposite: a controller a test can **walk through states** —
 `disconnected` → `connecting` → prompting for a credential → `connected`, and back down again by
-either route — and can make fail on demand. That is the whole unspent cost of this item, and it is
-a real piece of work rather than a fixture tweak, because the state machine it imitates is the one
-part of the app with genuine concurrency in it.
+either route — and can make fail on demand. That is the bulk of the work in this item, and it is a
+real piece of engineering rather than a fixture tweak, because the state machine it imitates is
+the one part of the app with genuine concurrency in it.
 
 Whether it belongs beside `StubController` or replaces it is an open question. They want different
 things — one wants to hold still for a photograph, the other wants to move — and a single class
@@ -132,12 +135,12 @@ serving both may end up serving neither.
 
 ### Two things worth deciding before starting
 
-- **The selection rule still applies.** Tier 1 admits a scenario only if it defends a sentence in
-  the documentation. That rule is what stops `uitests/` becoming a slower duplicate of `tests/`,
-  and it should not be quietly dropped just because journeys are harder to trace back to a
+- **The selection rule still applies.** The existing scenarios earn their place by defending a
+  sentence in the documentation. That rule is what stops `uitests/` becoming a slower duplicate of
+  `tests/`, and it should not be quietly dropped because journeys are harder to trace back to a
   sentence. If a journey is worth testing and no documentation describes it, the documentation is
   what is missing.
-- **Runtime.** Tier 1 is about 17 seconds locally and 70 in CI. Journeys are slower by nature —
-  state transitions have to actually happen. A suite that grows past a couple of minutes stops
-  being run before a push, and a browser suite nobody runs locally is one that only ever fails in
-  CI, which is the position this was meant to improve on.
+- **Runtime.** The seven scenarios take about 17 seconds locally and 70 in CI. Journeys are slower
+  by nature — state transitions have to actually happen. A suite that grows past a couple of
+  minutes stops being run before a push, and a browser suite nobody runs locally is one that only
+  ever fails in CI, which is the position this was meant to improve on.
