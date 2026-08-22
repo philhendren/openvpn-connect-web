@@ -10,6 +10,7 @@ import pytest
 
 from app import create_app
 from app.services import access, store
+from app.services.clients import Clients
 from app.services.dns_rules import DnsRules
 from app.services.openvpn import CONNECTED, VpnError, VpnStatus
 from app.services.routing import Route
@@ -1138,6 +1139,17 @@ def test_deploy_status_reports_a_clean_deployment_as_clean(auth_client):
     payload = auth_client.get("/api/deploy").get_json()
     assert payload["clean"] is True
     assert payload["items"] == []
+
+
+def test_deploy_status_surfaces_a_machine_with_only_openvpn3(app):
+    """The whole point of the survey: told on the page, not discovered at the first connect."""
+    app.config["CLIENTS"] = Clients(classic=None, v3="/usr/bin/openvpn3")
+    test_client = _signed_in(app)
+
+    payload = test_client.get("/api/deploy").get_json()
+    assert payload["clean"] is False
+    assert [item["kind"] for item in payload["items"]] == ["client"]
+    assert "OpenVPN 3" in payload["items"][0]["headline"]
 
 
 def test_deploy_status_surfaces_a_damaged_env_file(auth_client, config):

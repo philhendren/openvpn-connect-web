@@ -12,6 +12,7 @@ from app.auth import hash_password
 from app.config import Config
 from app.db import open_migrated
 from app.services import store, vault
+from app.services.clients import Clients
 from app.services.connections import Connections
 from app.services.dns_rules import DnsRules
 from app.services.history import History
@@ -387,6 +388,10 @@ def app(
             "CONNECTIONS": connections,
             "HISTORY": history,
             "DNS_RULES": dns_rules,
+            # Pinned, not discovered: otherwise every test's deployment self-check depends on
+            # whether the machine running the suite happens to have openvpn installed, and the
+            # CI runners do not.
+            "CLIENTS": Clients(classic="/usr/sbin/openvpn", v3=None),
             # An empty checkout, so the deployment self-check has nothing real to compare
             # against and every test sees a clean deployment unless it arranges otherwise.
             # Pointed at the real repo these would report this developer's machine.

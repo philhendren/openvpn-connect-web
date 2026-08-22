@@ -15,7 +15,7 @@ from flask import Flask, jsonify, request
 from app.auth import CsrfError, hash_password
 from app.config import Config, load_config
 from app.db import open_migrated
-from app.services import access, vault
+from app.services import access, clients, vault
 from app.services.connections import Connections
 from app.services.dns_rules import DnsRules
 from app.services.history import History
@@ -86,6 +86,11 @@ def create_app(overrides: Mapping[str, Any] | None = None) -> Flask:
         "CONNECTIONS", Connections(app.config["DB"], app.config["VAULT"], config.VPN_DIR)
     )
     app.config.setdefault("HISTORY", History(app.config["DB"]))
+    # Once, here, rather than per request: PATH does not change under a running process, and a
+    # machine with only `openvpn3` on it should be told so on the page rather than at the first
+    # connect. Lookups only -- nothing is executed.
+    app.config.setdefault("CLIENTS", clients.discover())
+    app.logger.info("OpenVPN client: %s", app.config["CLIENTS"].summary)
     app.config.setdefault("DNS_RULES", DnsRules(app.config["DB"], config))
 
     # One notifier, shared: the controller fires it on tunnel transitions and /api/notify/test

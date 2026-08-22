@@ -320,6 +320,7 @@ def deploy_status():
         source_root=current_app.config["SOURCE_ROOT"],
         migrations_dir=MIGRATIONS_DIR,
         started_at=current_app.config["STARTED_AT"],
+        clients=current_app.config["CLIENTS"],
     )
     return jsonify(report.to_dict())
 

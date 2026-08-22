@@ -130,7 +130,7 @@ Unrecognised distribution ($DISTRO_NAME).
 
 Install these by hand, then run: mkdir -p ~/.vpn && uv sync && sudo ./deploy/install.sh
 
-  openvpn        the client this panel drives
+  openvpn        the client this panel drives -- the classic 2.5+ client, NOT openvpn3
   iproute2       'ip' -- the routes and scope panels read the kernel's tables with it
   whois          route ownership lookups in the routes table
   systemd        the service, the root helper and the DNS report all use systemctl/resolvectl
@@ -144,6 +144,18 @@ esac
 say "Prerequisites for vpn-connect on $DISTRO_NAME"
 ok "package manager family: $FAMILY"
 ok "uv will belong to: $TARGET_USER"
+ok "supported client: the classic OpenVPN 2.5+ client (openvpn). OpenVPN 3 is not supported."
+
+# --- one OpenVPN is not the other --------------------------------------------
+#
+# Said here as well as in the README because somebody who already has openvpn3 will reasonably
+# expect this script to be a no-op, and would otherwise find out at the first connect.
+if command -v openvpn3 >/dev/null 2>&1; then
+    warn "openvpn3 is installed ($(command -v openvpn3)) -- vpn-connect cannot use it."
+    warn "OpenVPN 3 Linux has no management interface, and this panel's state, byte counters,"
+    warn "log, credential prompts and shutdown all arrive over that socket. The classic openvpn"
+    warn "client will be installed alongside it; the two coexist and openvpn3 is left untouched."
+fi
 
 # --- systemd is not optional -------------------------------------------------
 if [[ ! -d /run/systemd/system ]]; then
@@ -264,6 +276,7 @@ done
 
 if version="$(openvpn --version 2>/dev/null | head -1)"; then
     ok "$version"
+    ok "this is the client vpn-connect drives"
     number="$(sed -n 's/^OpenVPN \([0-9][0-9.]*\).*/\1/p' <<<"$version")"
     major="${number%%.*}"; rest="${number#*.}"; minor="${rest%%.*}"
     if [[ -n "$major" && -n "$minor" ]] && (( major < 2 || (major == 2 && minor < 5) )); then

@@ -164,7 +164,28 @@ UV="${UV:-$(sudo -u "$VPN_OWNER" -H bash -lc 'command -v uv' || true)}"
 
 [[ $EUID -eq 0 ]] || { echo "Run this with sudo." >&2; exit 1; }
 [[ -n "$UV" ]] || { echo "Cannot find uv for $VPN_OWNER — set UV=/path/to/uv." >&2; exit 1; }
-[[ -x "$OPENVPN" ]] || { echo "openvpn not found at $OPENVPN." >&2; exit 1; }
+# Even when the right client is present, say which one is being wired in: a machine with both
+# gets no choice here, and finding that out from behaviour rather than from a line of output is
+# how somebody ends up debugging the wrong program.
+if command -v openvpn3 >/dev/null 2>&1; then
+    echo "Note: openvpn3 is installed ($(command -v openvpn3)) and is not used." >&2
+    echo "      vpn-connect drives the classic openvpn client only -- OpenVPN 3 has no" >&2
+    echo "      management interface, which is where this panel's state, byte counters, log" >&2
+    echo "      and credential prompts all come from." >&2
+fi
+
+if [[ ! -x "$OPENVPN" ]]; then
+    echo "openvpn not found at $OPENVPN." >&2
+    # Worth saying explicitly: to somebody who has openvpn3 installed, "openvpn not found" reads
+    # as a broken installer rather than as a different program.
+    if command -v openvpn3 >/dev/null 2>&1; then
+        echo "An OpenVPN 3 client ($(command -v openvpn3)) is installed, but this panel drives" >&2
+        echo "the classic openvpn client over OpenVPN's management interface, which OpenVPN 3" >&2
+        echo "does not provide. They can be installed side by side." >&2
+    fi
+    echo "Run ./install_prerequisites.sh, or set OPENVPN=/path/to/openvpn." >&2
+    exit 1
+fi
 [[ -d "$VPN_DIR" ]] || { echo "VPN directory $VPN_DIR does not exist." >&2; exit 1; }
 
 # Hashed with the placeholder still in it, so the app can recompute exactly this value from the
