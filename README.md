@@ -27,29 +27,42 @@ here is novel; it exists because the alternative was another terminal window.
 
 ### Why the tunnel lives on that box and not on my laptop
 
-I work on a Chromebook every day. The Linux environment there is Crostini — a container — and
-VPNs inside it are a poor fit: connecting is not reliably clean, and the GUI you get for managing
-one is close to useless. It is enough to turn something on. It is nowhere near enough to tell you
-what turning it on actually did.
+My daily driver is a Chromebook, and the actual work happens **on the headless box** — I edit
+there over `code-server`, in a browser tab. (This project was written that way, on the same
+machine it manages.) The Chromebook is where I sit; the headless box is where things run.
 
-The bigger reason, though, is that **I do not want my personal laptop on the corporate LAN at
-all.** Joining a work network puts the entire machine inside somebody else's perimeter — their
-routes, their DNS, their visibility — for the sake of reaching a handful of internal services.
-That is a bad trade on a machine that is also my own.
+Which means the laptop never has to join anything. That is the point:
 
-So the tunnel stays on the headless box, and nothing else follows it there:
+> **My personal laptop — with all my personal things on it — is not on the corporate LAN. It
+> just knows how to get there.**
+
+Joining a work network puts the entire machine inside somebody else's perimeter — their routes,
+their DNS, their visibility — for the sake of reaching a handful of internal services. That is a
+bad trade on a machine that is also my own. It is doubly unappealing on this one: Crostini, the
+Chromebook's Linux container, is a poor place to run a VPN in the first place. Connecting is not
+reliably clean, and the GUI you get for managing one is barely enough to switch it on, let alone
+tell you what switching it on did.
+
+So the tunnel lives on the headless box, and the laptop reaches through it rather than following
+it in:
 
 ```
-Chromebook (Crostini) ──SOCKS──> headless box ──OpenVPN──> corporate network
-        │                        (this panel runs here)
-        └── Proxy SwitchyOmega decides which hostnames take that path;
-            everything else leaves the laptop normally
+Chromebook                          headless box
+(where I sit)                       (where it all runs)
+     │
+     ├──HTTPS──> code-server        ← the actual work
+     ├──HTTPS──> this panel         ← the tunnel's controls
+     └──SOCKS──> openvpn ──> corporate LAN
+
+Proxy SwitchyOmega sends internal hostnames down the SOCKS path.
+Everything else leaves the laptop directly.
 ```
 
 A SOCKS proxy from the Crostini container to the headless box, and Proxy SwitchyOmega in the
 browser routing by hostname: internal domains — the ones the VPN is actually *for* — go over the
-proxy and out through the tunnel, and everything else goes straight out as it always did.
-Exactly one machine is on the corporate network, on purpose, and it is not the one I work on.
+proxy and out through the tunnel. Everything else, which is to say everything personal, never
+goes near it. One machine is on the corporate network, deliberately, and it is not the one my
+life is on.
 
 That split is only comfortable if you can see what the tunnel at the far end is doing. Which is
 the other half of why this exists.
