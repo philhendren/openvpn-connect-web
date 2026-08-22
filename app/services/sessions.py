@@ -34,7 +34,7 @@ FAILED = "failed"
 INTERRUPTED = "interrupted"
 ENDED = "ended"
 
-#: The controller's words for why a tunnel went down, as stored in ``log_sessions.reason``.
+#: The controller's words for why a tunnel went down, as stored in ``sessions.reason``.
 REASON_MANUAL = "operator-requested"
 REASON_SEVERED = "link-lost"
 

@@ -113,7 +113,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-What I would say in its defence: the tests are real (712, and they never touch the real system —
+What I would say in its defence: the tests are real (716, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout), the privilege boundary is
 narrow and deliberate (one root helper, a fixed set of verbs, no caller-supplied paths or content
 crossing into root), and several of the bugs found along the way were the kind that hide from
@@ -318,6 +318,59 @@ The practical consequence: **back up `vpn-connect.db` and `webapp.env` together,
 The database is useless without the login password, and the hash that password is checked against
 lives in the env file. Changing your password re-encrypts every stored connection in place, so a
 database restored next to a *different* `webapp.env` cannot be decrypted at all.
+
+### The schema
+
+Eight tables, and no ORM — `app/services/store.py` holds the SQL and is the only module that talks
+to the database.
+
+| Table | Rows | What it is for |
+| --- | --- | --- |
+| `vault` | exactly one | The key-derivation salt and a verifier that proves a login password is right. Holds no key: as above, the key is derived at login and lives only in memory. |
+| `connections` | one per profile | Name, label and flags in the clear; `profile`, `username` and `password` are encrypted BLOBs. `requires_mfa` is *derived* from the profile's `static-challenge` line, not chosen. |
+| `settings` | key/value | Everything that is not a connection: the ntfy topic, the notification bodies. Deliberately schemaless, so a new setting needs no migration. |
+| `dns_rules` | one per rule | The domain forwarders and fallbacks rendered into `/etc/dnsmasq.d/vpn-connect.conf`. Not secret, so not encrypted. |
+| `events` | one per UP/DOWN | What the Events panel tails. The only table with no cap — see [What bounds each table](#what-bounds-each-table). |
+| `sessions` | one per attempt | The spine of the history: when it started, whether it ever reached CONNECTED, when and why it ended. |
+| `log_lines` | many per session | That attempt's OpenVPN log, capped at 2000 lines, keeping the *newest* — when a connect goes wrong the tail is what explains it. |
+| `traffic_samples` | many per session | Byte counters as OpenVPN reports them: **cumulative**, with rates derived at read time. Storing pre-computed rates would bake a late sample's false spike into the database permanently. |
+
+`log_lines` and `traffic_samples` both reference `sessions(id)` `ON DELETE CASCADE`, which is why
+[retention](#what-seven-days-means) sweeps one table and not three.
+
+#### What bounds each table
+
+Only one of them is bounded by age, and the constants are all at the top of `app/services/store.py`:
+
+| Table | Bounded by |
+| --- | --- |
+| `sessions` | **Age** — seven days, kept whole, with a 200-row backstop against a reconnect loop. [What "seven days" means](#what-seven-days-means) has the semantics. |
+| `log_lines` | **Count** — 2000 per session, keeping the newest. |
+| `traffic_samples` | **Count** — 17,280 per session, roughly a day at OpenVPN's default interval. |
+| `events` | **Nothing.** |
+
+The `events` exception is deliberate rather than forgotten. It is four small columns per tunnel
+transition and the panel shows the last ten, so an age-based sweep of the kind `sessions` gets would
+leave a box that had been idle for a fortnight with an *empty* Events panel — having deleted the
+only record of the last time the tunnel came up. If it ever does need bounding, a count cap is the
+shape that cannot do that.
+
+#### Migrations
+
+Numbered `.sql` files under `app/migrations/`, applied in order at start-up, with SQLite's own
+`PRAGMA user_version` as the bookkeeping — no migration library, and no table of its own. Two rules,
+both enforced by the runner:
+
+- **Never edit a migration that has been applied.** Add a new one. A file that has already run
+  somewhere is history, and rewriting it means two databases with the same `user_version` and
+  different shapes.
+- **Numbers are contiguous and unique.** A gap or a duplicate is refused rather than guessed at,
+  because either usually means two branches added `0008` independently.
+
+Each migration and its version bump go in one transaction, so a failure leaves the database at the
+last version that fully applied. The files carry the reasoning for the change in their header
+comments; `0007` is the shortest useful example — it renames `log_sessions` to `sessions`, which is
+what the table had become three migrations earlier.
 
 ## Remote access, and what it costs
 
@@ -720,8 +773,8 @@ from, because that question has a habit of being answered wrongly:
 - **The Python.** Jinja templates reload on edit; the modules behind them do not. A page can show
   new markup driven by code that never reloaded. Any `.py` edited after the process started is
   reported; templates are deliberately not.
-- **The database.** Schema version behind the migrations on disk. Migrations run at start-up, so a
-  restart is the whole fix.
+- **The database.** `user_version` behind the [migrations](#migrations) on disk. They run at
+  start-up, so a restart is the whole fix.
 - **`webapp.env`.** Repeated keys and lines that are not settings at all. The documented way to set
   a password *appends a command's output* to that file, and systemd takes the last value of a
   repeated key and skips anything it cannot parse — both silently, so a damaged file behaves almost

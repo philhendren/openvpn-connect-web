@@ -394,7 +394,7 @@ def _seed_history(db, history: History) -> None:
             history.append(line)
         history.end_session(outcome, reason)
         db.execute(
-            "UPDATE log_sessions SET started_at = ?, connected_at = ?, ended_at = ? WHERE id = ?",
+            "UPDATE sessions SET started_at = ?, connected_at = ?, ended_at = ? WHERE id = ?",
             (started, connected, ended, session),
         )
         db.commit()
@@ -406,7 +406,7 @@ def _seed_history(db, history: History) -> None:
     for at, rx, tx in LIVE_SERIES:
         store.record_sample(db, live, at, rx, tx)
     db.execute(
-        "UPDATE log_sessions SET started_at = ?, connected_at = ? WHERE id = ?",
+        "UPDATE sessions SET started_at = ?, connected_at = ? WHERE id = ?",
         (
             (now - timedelta(hours=8, minutes=41)).isoformat(timespec="seconds"),
             (now - timedelta(hours=8, minutes=41)).isoformat(timespec="seconds"),

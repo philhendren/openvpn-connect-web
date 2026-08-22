@@ -52,15 +52,15 @@ class History:
             log.exception("could not read the event history")
             return []
 
-    # -- log sessions -----------------------------------------------------
+    # -- sessions --------------------------------------------------------
 
     def start_session(self, connection: str | None) -> None:
-        """Begin a new attempt's log. Any unfinished previous session is closed first."""
+        """Begin a new attempt. Any unfinished previous session is closed first."""
         self.end_session("interrupted")
         try:
-            session_id = store.start_log_session(self._db, connection)
+            session_id = store.start_session(self._db, connection)
         except Exception:  # noqa: BLE001
-            log.exception("could not open a log session")
+            log.exception("could not open a session")
             return
         with self._lock:
             self._session_id = session_id
@@ -68,7 +68,7 @@ class History:
         try:
             store.prune_sessions(self._db)
         except Exception:  # noqa: BLE001
-            log.exception("could not prune old log sessions")
+            log.exception("could not prune old sessions")
 
     def append(self, line: str) -> None:
         with self._lock:
@@ -99,7 +99,7 @@ class History:
         try:
             store.mark_session_connected(self._db, session_id)
         except Exception:  # noqa: BLE001
-            log.exception("could not mark the log session connected")
+            log.exception("could not mark the session connected")
 
     def end_session(self, outcome: str, reason: str = "") -> None:
         self.flush()
@@ -109,9 +109,9 @@ class History:
         if session_id is None:
             return
         try:
-            store.end_log_session(self._db, session_id, outcome, reason)
+            store.end_session(self._db, session_id, outcome, reason)
         except Exception:  # noqa: BLE001
-            log.exception("could not close the log session")
+            log.exception("could not close the session")
 
     # -- traffic ----------------------------------------------------------
 
@@ -145,7 +145,7 @@ class History:
         try:
             return store.recent_sessions(self._db, limit)
         except Exception:  # noqa: BLE001
-            log.exception("could not list log sessions")
+            log.exception("could not list sessions")
             return []
 
     def sessions(self) -> list[dict[str, object]]:
@@ -160,7 +160,7 @@ class History:
         try:
             return store.session_lines(self._db, session_id, limit)
         except Exception:  # noqa: BLE001
-            log.exception("could not read log session %s", session_id)
+            log.exception("could not read session %s", session_id)
             return []
 
     def last_session_lines(self, limit: int = 500) -> list[str]:

@@ -213,22 +213,22 @@ def test_events_respect_the_limit(db):
 
 
 def test_a_session_keeps_its_lines(db):
-    session = store.start_log_session(db, "examplecorp")
+    session = store.start_session(db, "examplecorp")
     store.append_lines(db, session, ["first", "second"])
     assert store.session_lines(db, session) == ["first", "second"]
 
 
 def test_a_failed_attempts_log_survives(db):
     """The whole point: the in-memory ring buffer emptied exactly when you wanted to read it."""
-    session = store.start_log_session(db, "examplecorp")
+    session = store.start_session(db, "examplecorp")
     store.append_lines(db, session, ["AUTH_FAILED"])
-    store.end_log_session(db, session, "failed")
+    store.end_session(db, session, "failed")
     assert store.session_lines(db, session) == ["AUTH_FAILED"]
     assert store.recent_sessions(db)[0]["outcome"] == "failed"
 
 
 def test_lines_are_capped_keeping_the_newest(db):
-    session = store.start_log_session(db, None)
+    session = store.start_session(db, None)
     store.append_lines(db, session, [f"line {i}" for i in range(store.MAX_LINES_PER_SESSION + 100)])
     lines = store.session_lines(db, session, limit=10_000)
     assert len(lines) == store.MAX_LINES_PER_SESSION
@@ -236,20 +236,20 @@ def test_lines_are_capped_keeping_the_newest(db):
 
 
 def test_appending_nothing_is_a_no_op(db):
-    session = store.start_log_session(db, None)
+    session = store.start_session(db, None)
     store.append_lines(db, session, [])
     assert store.session_lines(db, session) == []
 
 
 def test_session_lines_returns_the_tail_in_order(db):
-    session = store.start_log_session(db, None)
+    session = store.start_session(db, None)
     store.append_lines(db, session, [f"line {i}" for i in range(10)])
     assert store.session_lines(db, session, limit=3) == ["line 7", "line 8", "line 9"]
 
 
 def test_pruning_drops_old_sessions_and_their_lines(db):
     for _ in range(5):
-        session = store.start_log_session(db, None)
+        session = store.start_session(db, None)
         store.append_lines(db, session, ["x"])
     assert store.prune_sessions(db, keep=2) == 3
     assert len(store.recent_sessions(db, limit=50)) == 2
@@ -257,7 +257,7 @@ def test_pruning_drops_old_sessions_and_their_lines(db):
 
 
 def test_recent_sessions_reports_line_counts(db):
-    session = store.start_log_session(db, "examplecorp")
+    session = store.start_session(db, "examplecorp")
     store.append_lines(db, session, ["a", "b", "c"])
     assert store.recent_sessions(db)[0]["lines"] == 3
 
@@ -280,9 +280,9 @@ def _dated_session(
     reason: str = "",
 ) -> int:
     """A session placed at a chosen moment in the past."""
-    session = store.start_log_session(db, connection)
+    session = store.start_session(db, connection)
     db.execute(
-        "UPDATE log_sessions SET started_at = ?, connected_at = ?, ended_at = ?, outcome = ?,"
+        "UPDATE sessions SET started_at = ?, connected_at = ?, ended_at = ?, outcome = ?,"
         " reason = ? WHERE id = ?",
         (started, connected, ended, outcome, reason, session),
     )
@@ -295,20 +295,20 @@ def _ago(**delta) -> str:
 
 
 def test_a_session_records_when_it_came_up(db):
-    session = store.start_log_session(db, "examplecorp")
+    session = store.start_session(db, "examplecorp")
     store.mark_session_connected(db, session)
     assert store.list_sessions(db)[0]["connected_at"] is not None
 
 
 def test_an_attempt_that_never_came_up_has_no_connected_time(db):
     """The distinction the whole panel turns on: failed twice is not dropped twice."""
-    store.start_log_session(db, "examplecorp")
+    store.start_session(db, "examplecorp")
     assert store.list_sessions(db)[0]["connected_at"] is None
 
 
 def test_coming_up_again_does_not_restart_the_clock(db):
     """Re-adopting a running tunnel re-announces CONNECTED; the tunnel is no younger for it."""
-    session = store.start_log_session(db, "examplecorp")
+    session = store.start_session(db, "examplecorp")
     store.mark_session_connected(db, session)
     first = store.list_sessions(db)[0]["connected_at"]
     store.mark_session_connected(db, session)
@@ -316,20 +316,20 @@ def test_coming_up_again_does_not_restart_the_clock(db):
 
 
 def test_ending_a_session_records_why(db):
-    session = store.start_log_session(db, "examplecorp")
-    store.end_log_session(db, session, "disconnected", "link-lost")
+    session = store.start_session(db, "examplecorp")
+    store.end_session(db, session, "disconnected", "link-lost")
     row = store.list_sessions(db)[0]
     assert (row["outcome"], row["reason"]) == ("disconnected", "link-lost")
 
 
 def test_a_session_that_ends_without_a_reason_stores_an_empty_one(db):
-    session = store.start_log_session(db, "examplecorp")
-    store.end_log_session(db, session, "failed")
+    session = store.start_session(db, "examplecorp")
+    store.end_session(db, session, "failed")
     assert store.list_sessions(db)[0]["reason"] == ""
 
 
 def test_the_history_reports_what_each_session_carried(db):
-    session = store.start_log_session(db, "client")
+    session = store.start_session(db, "client")
     store.record_sample(db, session, 1.0, 1024, 512)
     store.record_sample(db, session, 2.0, 4096, 2048)
     store.append_lines(db, session, ["a", "b"])
@@ -340,7 +340,7 @@ def test_the_history_reports_what_each_session_carried(db):
 def test_a_counter_that_went_backwards_still_reports_the_peak(db):
     """Cumulative counters, so the largest reading is the total -- taking the last would
     under-report an attempt whose counter was reset underneath it."""
-    session = store.start_log_session(db, "client")
+    session = store.start_session(db, "client")
     store.record_sample(db, session, 1.0, 9000, 9000)
     store.record_sample(db, session, 2.0, 12, 12)
     row = store.list_sessions(db)[0]
@@ -348,7 +348,7 @@ def test_a_counter_that_went_backwards_still_reports_the_peak(db):
 
 
 def test_a_session_with_no_samples_reports_nothing_rather_than_failing(db):
-    store.start_log_session(db, "client")
+    store.start_session(db, "client")
     assert store.list_sessions(db)[0]["bytes_in"] is None
 
 
@@ -423,7 +423,7 @@ def test_the_count_backstop_still_bounds_a_reconnect_loop(db):
 
 
 def test_samples_round_trip(db):
-    session = store.start_log_session(db, "client")
+    session = store.start_session(db, "client")
     store.record_sample(db, session, 1000.0, 1024, 512)
     store.record_sample(db, session, 1005.0, 2048, 1024)
     assert store.session_samples(db, session) == [(1000.0, 1024, 512), (1005.0, 2048, 1024)]
@@ -431,7 +431,7 @@ def test_samples_round_trip(db):
 
 def test_samples_are_capped_keeping_the_newest(db, monkeypatch):
     monkeypatch.setattr(store, "MAX_SAMPLES_PER_SESSION", 5)
-    session = store.start_log_session(db, None)
+    session = store.start_session(db, None)
     for index in range(12):
         store.record_sample(db, session, float(index), index, index)
     samples = store.session_samples(db, session)
@@ -440,8 +440,8 @@ def test_samples_are_capped_keeping_the_newest(db, monkeypatch):
 
 
 def test_samples_belong_to_their_session(db):
-    first = store.start_log_session(db, None)
-    second = store.start_log_session(db, None)
+    first = store.start_session(db, None)
+    second = store.start_session(db, None)
     store.record_sample(db, first, 1.0, 10, 10)
     store.record_sample(db, second, 2.0, 20, 20)
     assert store.session_samples(db, first) == [(1.0, 10, 10)]
@@ -451,7 +451,7 @@ def test_samples_belong_to_their_session(db):
 def test_pruning_takes_the_samples_with_the_session(db):
     """ON DELETE CASCADE, so retention needs no separate sweep for these."""
     for _ in range(4):
-        session = store.start_log_session(db, None)
+        session = store.start_session(db, None)
         store.record_sample(db, session, 1.0, 1, 1)
     store.prune_sessions(db, keep=1)
     assert db.execute("SELECT COUNT(*) FROM traffic_samples").fetchone()[0] == 1
