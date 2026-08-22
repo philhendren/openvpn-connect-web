@@ -586,12 +586,6 @@ the shell that makes up the privilege boundary. Coverage (currently ~93%, branch
 is reported in the run summary and uploaded as an artifact; the 90% floor lives in `pyproject.toml`,
 so CI fails on the same number you do locally.
 
-**There are no status badges here, and none should be added while this repository is private.**
-GitHub's workflow badge endpoint and `raw.githubusercontent.com` both refuse anonymous requests for
-a private repository, and every badge — GitHub's own included — is fetched anonymously through an
-image proxy. A badge added now renders as a broken image for everyone, the owner included. They are
-worth adding the day this goes public, and not before.
-
 The suite runs with **deliberately cheap scrypt parameters** — at production cost the fixtures spend
 about a minute deriving keys nobody looks at. `SCRYPT_N_PRODUCTION` and
 `PASSWORD_HASH_METHOD_PRODUCTION` are what a real install uses, and `tests/test_vault.py` loads an
