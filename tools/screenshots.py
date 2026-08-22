@@ -54,6 +54,9 @@ from app.services.whois import WhoisResult  # noqa: E402
 PASSWORD = "screenshot-demo-password"
 
 PORT = 5099
+#: A second instance, with no password configured, so the setup page can be photographed too.
+#: It cannot be the same one: that page exists precisely when the app has nothing to sign in to.
+SETUP_PORT = 5100
 OUT = ROOT / "docs" / "screenshots"
 
 #: Documentation ranges, in the two roles a split tunnel actually has: the operator's own private
@@ -431,10 +434,44 @@ def build(config, db, connections, history, rules, source_root: Path):
     )
 
 
-def serve(app):
+def build_unconfigured(tmp: Path):
+    """A second app with **no login password**, which is the whole state being photographed.
+
+    A fresh install looks like this: the database exists because migrations ran, and nothing else
+    does -- no vault, no connections, nobody who can sign in.
+    """
+    vpn_dir = tmp / "fresh"
+    vpn_dir.mkdir()
+    config = replace(
+        Config(),
+        SECRET_KEY="screenshot-secret",
+        PASSWORD_HASH="",
+        VPN_DIR=vpn_dir,
+        HELPER=tmp / "helper-that-does-not-exist",
+        MGMT_SOCKET=tmp / "socket-that-does-not-exist",
+    )
+    db = open_migrated(config.database)
+    state = vault.VaultState()
+    return create_app(
+        {
+            "APP_CONFIG": config,
+            "CONTROLLER": StubController(),
+            "DB": db,
+            "VAULT": state,
+            "CONNECTIONS": Connections(db, state, vpn_dir),
+            "HISTORY": History(db),
+            "DNS_RULES": DnsRules(db, config, runner=StubResolvectl()),
+            "SOURCE_ROOT": vpn_dir,
+            "STARTED_AT": time.time() + 3600,
+            "TESTING": True,
+        }
+    )
+
+
+def serve(app, port: int = PORT):
     from werkzeug.serving import make_server
 
-    server = make_server("127.0.0.1", PORT, app, threaded=True)
+    server = make_server("127.0.0.1", port, app, threaded=True)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
@@ -473,6 +510,14 @@ def capture(out: Path) -> None:
         page.goto(f"{base}/login")
         page.wait_for_selector("#password")
         page.screenshot(path=out / "login.png")
+
+        # The other thing /login can be: a fresh install with no password set yet. Served by the
+        # second instance, since one app cannot be both configured and not.
+        page.goto(f"http://127.0.0.1:{SETUP_PORT}/login")
+        page.wait_for_selector("pre.code")
+        page.screenshot(path=out / "setup.png")
+        page.goto(f"{base}/login")
+        page.wait_for_selector("#password")
 
         page.fill("#password", PASSWORD)
         page.click("button[type=submit]")
@@ -565,7 +610,12 @@ def main() -> int:
         # The vault has to be the one the seeding used, or the connections cannot be decrypted.
         app.config["VAULT"] = _vault_of(connections)
         serve(app)
-        print(f"serving the seeded instance on http://127.0.0.1:{PORT}", file=sys.stderr)
+        serve(build_unconfigured(tmp), SETUP_PORT)
+        print(
+            f"serving the seeded instance on http://127.0.0.1:{PORT}"
+            f" and a fresh one on http://127.0.0.1:{SETUP_PORT}",
+            file=sys.stderr,
+        )
         capture(args.out)
         for image in sorted(args.out.glob("*.png")):
             print(f"  {image.relative_to(ROOT)}  {image.stat().st_size // 1024} KB")
