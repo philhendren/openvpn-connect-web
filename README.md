@@ -74,14 +74,14 @@ of what they are prepared to say, and everything past it is trust — that the r
 assume, that DNS is not being quietly taken over, that "split tunnel" means what it sounded like
 when somebody said it in a meeting. Corporate clients tend to be the worst of them: they are built
 for the administrator, and the questions a person might reasonably ask about *their own machine*
-are simply not answerable from the interface.
+are simply not answerable from the user interface.
 
 They are answerable questions, though, and the answers are sitting right there on the box:
 
 - What is this thing actually routing, and what is it leaving alone?
 - Did every route the server asked for actually get installed? (**Not** the same question — see
   [Pushed, but not installed](#pushed-but-not-installed).)
-- Who is resolving my DNS right now, and can my employer see every domain I look up, including the
+- Who is resolving my DNS right now, and can the corporate network see every domain I look up, including the
   ones that are none of their business?
 - Is any of it escaping over IPv6 while the IPv4 side looks fine?
 - What happened at 3am when it dropped, and did it come back?
