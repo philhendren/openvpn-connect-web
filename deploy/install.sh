@@ -164,6 +164,16 @@ UV="${UV:-$(sudo -u "$VPN_OWNER" -H bash -lc 'command -v uv' || true)}"
 
 [[ $EUID -eq 0 ]] || { echo "Run this with sudo." >&2; exit 1; }
 [[ -n "$UV" ]] || { echo "Cannot find uv for $VPN_OWNER — set UV=/path/to/uv." >&2; exit 1; }
+# Even when the right client is present, say which one is being wired in: a machine with both
+# gets no choice here, and finding that out from behaviour rather than from a line of output is
+# how somebody ends up debugging the wrong program.
+if command -v openvpn3 >/dev/null 2>&1; then
+    echo "Note: openvpn3 is installed ($(command -v openvpn3)) and is not used." >&2
+    echo "      vpn-connect drives the classic openvpn client only -- OpenVPN 3 has no" >&2
+    echo "      management interface, which is where this panel's state, byte counters, log" >&2
+    echo "      and credential prompts all come from." >&2
+fi
+
 if [[ ! -x "$OPENVPN" ]]; then
     echo "openvpn not found at $OPENVPN." >&2
     # Worth saying explicitly: to somebody who has openvpn3 installed, "openvpn not found" reads

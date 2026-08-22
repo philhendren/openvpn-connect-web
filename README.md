@@ -86,7 +86,9 @@ code. Nothing is passed on the openvpn command line to force one or the other.
   both call `systemctl` / `resolvectl`.
 - **OpenVPN 2.5+ — the classic `openvpn` client**, on `PATH` or at `OPENVPN=/path/to/openvpn`
   when installing. 2.6+ is what the [DNS](#dns) section describes, because that is where the
-  client started configuring systemd-resolved itself. **Not `openvpn3`** — see below.
+  client started configuring systemd-resolved itself.
+  **[`openvpn3` is not supported](#openvpn-3-openvpn3-is-not-supported)** — it is a different
+  program, not a newer version of this one.
 - **`sudo`**, for the install and for the one root operation at runtime.
 - **`iproute2`** (`ip`) — the Routes and Tunnel scope panels read the kernel's tables with it.
 - **`whois`** — optional. Without it the routes table still lists every route, just with no owner
@@ -96,24 +98,30 @@ code. Nothing is passed on the openvpn command line to force one or the other.
 - **[uv](https://docs.astral.sh/uv/)** — Python is managed entirely by uv; there is no
   `requirements.txt` and no virtualenv to make by hand.
 
-### OpenVPN 3 (`openvpn3`) is a different program
+### OpenVPN 3 (`openvpn3`) is not supported
 
-There are two OpenVPN clients for Linux and they are not interchangeable. This panel drives the
-**classic** one (the 2.x `openvpn` binary), because everything live it shows — state, byte
-counters, the log, the credential prompt, the shutdown — arrives over OpenVPN's **management
-interface**, a socket the classic client opens on request.
+> [!WARNING]
+> **This panel supports the classic OpenVPN client only — the 2.5+ `openvpn` binary. It cannot
+> drive OpenVPN 3 Linux (`openvpn3`), and pointing it at that binary will not work.**
+>
+> OpenVPN 3 is a separate implementation with **no management interface**. Everything live this
+> panel shows — state, byte counters, the log, the credential and MFA prompts, the shutdown —
+> arrives over the management socket the classic client opens on request, and none of it exists
+> on the OpenVPN 3 side. Supporting it means a second backend that talks to its D-Bus API, which
+> is not written.
 
-**OpenVPN 3 Linux has no management interface.** It is a separate implementation with a D-Bus
-service behind an `openvpn3 session-*` command line, so a panel built on management events cannot
-drive it by pointing at a different binary: the events it is built out of do not exist there.
-Supporting it properly means a second backend that polls the D-Bus API instead, which is not
-written.
+The two clients install side by side and do not conflict, so on an `openvpn3` machine you can add
+the classic client and use both — this panel will drive the classic one and leave `openvpn3`
+alone.
 
-So the app looks for both, once, when it starts — on `PATH` and in the usual `sbin` directories,
-since a process started from a login shell often has neither on its path. If it finds only
-`openvpn3` it says so in the deployment banner, in as many words, rather than letting you find out
-at the first connect. The two clients can be installed side by side; installing the classic one
-alongside `openvpn3` is all this needs.
+You will be told which situation you are in rather than left to find out at the first connect:
+
+- **The app** looks for both clients once at startup, on `PATH` and in the usual `sbin`
+  directories (a process started from a login shell often has neither on its path). If it finds
+  only `openvpn3`, the deployment banner says so in as many words.
+- **`install_prerequisites.sh`** names the supported client, and warns if `openvpn3` is present.
+- **`deploy/install.sh`** refuses to install without the classic client, and says why if
+  `openvpn3` is what it found instead.
 
 ### Installing them
 
