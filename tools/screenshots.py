@@ -95,11 +95,19 @@ class StubController:
                 "Control Channel: TLSv1.3, cipher TLSv1.3 TLS_AES_256_GCM_SHA384",
                 f"[vpn.example.com] Peer Connection Initiated with [AF_INET]{SERVER_IP}:1194",
                 "SENT CONTROL [vpn.example.com]: 'PUSH_REQUEST' (status=1)",
+                # Nine routes pushed, six of them in route_list below -- so the picture shows a
+                # real three-row "pushed but not installed" table rather than a contrived one.
                 "PUSH: Received control message: 'PUSH_REPLY,route 10.20.0.0 255.255.0.0,"
-                "route 203.0.113.0 255.255.255.0,dhcp-option DNS 10.20.0.53,"
+                "route 10.40.0.0 255.252.0.0,route 172.20.0.0 255.252.0.0,"
+                "route 52.94.0.0 255.255.0.0,route 13.107.6.0 255.255.255.0,"
+                "route 162.159.0.0 255.255.0.0,route 192.168.30.0 255.255.255.0,"
+                "route 172.31.12.0 255.255.252.0,route 10.60.0.0 255.255.0.0 vpn_gateway 500,"
+                "dhcp-option DNS 10.20.0.53,route-gateway 10.20.30.1,"
                 f"ifconfig {TUN_IP} 255.255.254.0'",
                 "OPTIONS IMPORT: route options modified",
                 "net_addr_v4_add: 10.20.30.40/23 dev tun0",
+                "ERROR: Linux route add command failed: external program exited with error "
+                "status: 2",
                 "Initialization Sequence Completed",
             ],
         )
@@ -170,6 +178,16 @@ class StubController:
 
     def routes(self) -> list[Route]:
         return list(self.route_list)
+
+    def pushed(self, installed: list[Route] | None = None):
+        """Run the real comparison over the canned push, so the table is not hand-written."""
+        from app.services.pushed import find_reply
+        from app.services.pushed import report as push_report
+
+        lines = self.status.log_lines
+        return push_report(
+            find_reply(lines), self.route_list if installed is None else installed, lines
+        )
 
     def scope(self) -> TunnelScope:
         return self.tunnel_scope
@@ -530,6 +548,13 @@ def capture(out: Path) -> None:
             _open(page, panel, ready)
             page.locator(f"section:has({panel})").screenshot(path=out / f"{name}.png")
             _close(page, panel)
+
+        # The rejected table gets its own close-up. Inside the routes section it sits under a
+        # 300px scroll box, so at section width the thing being explained is a strip at the
+        # bottom of the picture.
+        _open(page, "#panel-routes", "#routes-rejected-body tr")
+        page.locator("#routes-rejected").screenshot(path=out / "routes-rejected.png")
+        _close(page, "#panel-routes")
 
         # The two things a still image of a table cannot show: that a row opens its own log, and
         # that the search narrows by how a session ended rather than by date.

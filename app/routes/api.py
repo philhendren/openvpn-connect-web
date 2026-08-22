@@ -69,11 +69,21 @@ def routes():
 
     Kept out of /api/status on purpose: status is polled every few seconds and this list runs to
     hundreds of rows on a split tunnel.  The page fetches it when the tunnel changes state.
+
+    The push comparison rides along on the same request rather than getting an endpoint of its
+    own: it is derived from this very list, and fetching it separately would let the two answers
+    be read a second apart and disagree.
     """
     controller = _controller()
-    entries = [route.to_dict() for route in controller.routes()]
+    installed = controller.routes()
+    entries = [route.to_dict() for route in installed]
     device = current_app.config["APP_CONFIG"].TUN_DEVICE
-    return jsonify(device=device, count=len(entries), routes=entries)
+    return jsonify(
+        device=device,
+        count=len(entries),
+        routes=entries,
+        pushed=controller.pushed(installed).to_dict(),
+    )
 
 
 @bp.post("/connect")

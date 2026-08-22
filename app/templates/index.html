@@ -378,7 +378,10 @@
             <span class="panel-chevron" aria-hidden="true"></span>
             <span class="card-title-sm mb-0">Routes</span>
           </button>
-          <span class="badge route-count" id="routes-count">—</span>
+          <div class="d-flex align-items-center gap-2">
+            <span class="badge route-rejected-count" id="routes-rejected-count" hidden></span>
+            <span class="badge route-count" id="routes-count">—</span>
+          </div>
         </div>
         <div class="collapse panel-body" id="panel-routes" data-panel="routes">
           <div class="d-flex align-items-center gap-2 flex-wrap mb-2 mt-2">
@@ -410,6 +413,31 @@
             private address space — are looked up with <code>whois</code> so you can see who
             actually owns what you are routing traffic to.
           </p>
+
+          <!-- Hidden unless there is something to say. A permanently empty "no rejected routes"
+               table would train people to stop reading the one place that tells them a subnet
+               is missing. -->
+          <div id="routes-rejected" class="rejected-block mt-3" hidden>
+            <h3 class="card-title-sm mb-1">Pushed, but not installed</h3>
+            <p class="small mb-2" id="routes-rejected-lead"></p>
+            <div class="routes-scroll rejected-scroll">
+              <table class="table table-sm routes-table mb-0">
+                <thead>
+                  <tr>
+                    <th scope="col">Destination</th>
+                    <th scope="col">Via</th>
+                    <th scope="col" class="text-end">Addresses</th>
+                    <th scope="col">Pushed as</th>
+                  </tr>
+                </thead>
+                <tbody id="routes-rejected-body"></tbody>
+              </table>
+            </div>
+            <p class="text-body-secondary small mb-1 mt-2" id="routes-rejected-said" hidden>
+              OpenVPN said:
+            </p>
+            <ul class="rejected-notes small mb-0 ps-3" id="routes-rejected-notes" hidden></ul>
+          </div>
         </div>
       </div>
     </div>

@@ -89,7 +89,7 @@ Two things here are worth more than the percentage:
 
 ### Routes
 
-![The routes panel: eight prefixes, three of them public, with their owners](docs/screenshots/routes.png)
+![The routes panel: eight installed prefixes, three of them public and named by whois, with three more the server pushed and never got underneath](docs/screenshots/routes.png)
 
 Every prefix the tunnel actually installed, read from the **kernel routing table** rather than
 from what the server offered — those diverge whenever a route is rejected or overridden. Public
@@ -100,6 +100,39 @@ hundreds of these.
 Two rows are tagged as not-pushed: **on-link** (the tunnel's own subnet) and **server** (the route
 to the concentrator itself, pinned to the physical NIC so the tunnel's own packets do not try to
 travel through the tunnel).
+
+### Routes the server asked for and did not get
+
+![Three pushed routes missing from the routing table, with the exact option each was pushed as, and OpenVPN's own error underneath](docs/screenshots/routes-rejected.png)
+
+The table above answers "what *is* the tunnel carrying?". This one answers the question that
+actually bites: "what did the server ask for that never happened?"
+
+It matters because there is nothing else to notice. The connection succeeds, the status card is
+green, the traffic graph moves — and one internal range is quietly unreachable. You find out when
+a colleague asks why you cannot reach the thing everyone else can.
+
+Reading it:
+
+- **Destination** is the range that is missing. **Addresses** is how much of the network it
+  covers, so you can tell a single server from a whole site.
+- **Via** is the gateway the server named. `vpn_gateway` is not a mistake — it is OpenVPN's own
+  word for "whatever this tunnel's gateway turns out to be".
+- **Pushed as** is the option exactly as it arrived. This is the line to paste to whoever runs the
+  VPN, because it is the line they wrote.
+- **OpenVPN said** appears when the client left an explanation in its log. Those are its words,
+  not ours.
+
+The whole block is hidden when there is nothing wrong, and the count next to the panel title —
+*3 not installed* — is visible with the panel still collapsed, so you do not have to go looking.
+
+Two things it will not do. It stays quiet on a tunnel this panel did not start, because the
+server's message arrives once, at the moment of connecting, and it was not listening then. And if
+*every* pushed route is missing it says so as one problem rather than as a list, because that is
+one setting somewhere, not thirty separate failures.
+
+Nothing here is something you can fix from this page. It is the evidence, and it is usually the
+VPN administrator's to act on.
 
 ### DNS
 

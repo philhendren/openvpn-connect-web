@@ -25,16 +25,73 @@ to all of those was "SSH back in and go digging".
 So this is a web page for that box, openable from a phone or a laptop on the same network. Nothing
 here is novel; it exists because the alternative was another terminal window.
 
-Two consequences of that origin worth knowing before you adopt it:
+### Why the tunnel lives on that box and not on my laptop
+
+I work on a Chromebook every day. The Linux environment there is Crostini — a container — and
+VPNs inside it are a poor fit: connecting is not reliably clean, and the GUI you get for managing
+one is close to useless. It is enough to turn something on. It is nowhere near enough to tell you
+what turning it on actually did.
+
+The bigger reason, though, is that **I do not want my personal laptop on the corporate LAN at
+all.** Joining a work network puts the entire machine inside somebody else's perimeter — their
+routes, their DNS, their visibility — for the sake of reaching a handful of internal services.
+That is a bad trade on a machine that is also my own.
+
+So the tunnel stays on the headless box, and nothing else follows it there:
+
+```
+Chromebook (Crostini) ──SOCKS──> headless box ──OpenVPN──> corporate network
+        │                        (this panel runs here)
+        └── Proxy SwitchyOmega decides which hostnames take that path;
+            everything else leaves the laptop normally
+```
+
+A SOCKS proxy from the Crostini container to the headless box, and Proxy SwitchyOmega in the
+browser routing by hostname: internal domains — the ones the VPN is actually *for* — go over the
+proxy and out through the tunnel, and everything else goes straight out as it always did.
+Exactly one machine is on the corporate network, on purpose, and it is not the one I work on.
+
+That split is only comfortable if you can see what the tunnel at the far end is doing. Which is
+the other half of why this exists.
+
+### VPN clients tell you almost nothing
+
+Most VPN clients give you a button and a colour. *Connected.* Green. That is very nearly the whole
+of what they are prepared to say, and everything past it is trust — that the routes are what you
+assume, that DNS is not being quietly taken over, that "split tunnel" means what it sounded like
+when somebody said it in a meeting. Corporate clients tend to be the worst of them: they are built
+for the administrator, and the questions a person might reasonably ask about *their own machine*
+are simply not answerable from the interface.
+
+They are answerable questions, though, and the answers are sitting right there on the box:
+
+- What is this thing actually routing, and what is it leaving alone?
+- Did every route the server asked for actually get installed? (**Not** the same question — see
+  [Pushed, but not installed](#pushed-but-not-installed).)
+- Who is resolving my DNS right now, and can my employer see every domain I look up, including the
+  ones that are none of their business?
+- Is any of it escaping over IPv6 while the IPv4 side looks fine?
+- What happened at 3am when it dropped, and did it come back?
+
+So the panel is unapologetically an introspection tool. It reports what the kernel and
+systemd-resolved actually say, in plain language, and it is deliberately willing to tell you
+something you would rather not know. **The design bias throughout is *report what is true*, not
+what was configured.** The routes panel reads the kernel's routing table, not the server's
+`PUSH_REPLY`. The DNS panel reads systemd-resolved, not the pushed options. That distinction has
+repeatedly been the difference between a panel that reassures you and one that tells you your VPN
+provider can see every domain you visit — which is precisely what it told me, and is why
+[Ignore pushed DNS](#taking-dns-back--ignore-pushed-dns) exists at all.
+
+None of this is privileged information. It is just information nobody bothers to show you.
+
+### Before you adopt it
 
 - **It is deliberately single-machine and single-user.** It controls the local `openvpn` binary,
   not a fleet. There is one login, no user accounts, no multi-tenancy. It should never be exposed
   to the internet — put it on your LAN or behind a VPN of its own (yes, really).
-- **The design bias throughout is *report what is actually true*, not what was configured.** The
-  routes panel reads the kernel's routing table, not the server's `PUSH_REPLY`. The DNS panel reads
-  systemd-resolved, not the pushed options. That distinction has repeatedly been the difference
-  between a panel that reassures you and one that tells you your VPN provider can see every domain
-  you look up.
+- **It is an observer, not an enforcer.** It will tell you the tunnel is taking all your DNS; it
+  will not stop your employer configuring it that way. Where it can act, it says so plainly, and
+  where it cannot, it says that too.
 
 ## Vibe-coded, on purpose
 
@@ -43,7 +100,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-What I would say in its defence: the tests are real (612, and they never touch the real system —
+What I would say in its defence: the tests are real (712, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout), the privilege boundary is
 narrow and deliberate (one root helper, a fixed set of verbs, no caller-supplied paths or content
 crossing into root), and several of the bugs found along the way were the kind that hide from
@@ -449,6 +506,62 @@ Two rows are tagged because they are not pushed routes:
 `ip route` needs no privileges, so this stays outside the root helper. The list is served by
 `GET /api/routes` and deliberately kept off `/api/status`, which the page polls every few seconds.
 The page refetches it when the tunnel changes state, and the **Refresh** button forces a re-read.
+
+### Pushed, but not installed
+
+Reading the kernel is the right call, but it has one blind spot: a table can only show what is
+*there*. The failure it cannot show is the opposite one — the server pushes a subnet, the client
+declines it, the tunnel comes up green, and that one range is unreachable with nothing anywhere
+saying so.
+
+So the push is parsed as well, and the two are diffed. `app/services/pushed.py` is pure string and
+set work — no subprocess, no I/O — over the single `PUSH_REPLY` line the management interface
+delivers as a `>LOG` event:
+
+```
+PUSH: Received control message: 'PUSH_REPLY,route 10.20.0.0 255.255.0.0,route-gateway 10.20.30.1,…'
+```
+
+Anything pushed and not present in the kernel table is listed under the routes, with the option
+verbatim in a **Pushed as** column — that string is what you quote at whoever runs the
+concentrator. Any of OpenVPN's own route complaints still in the log (`route add command failed`,
+`needs a gateway parameter`, `Cannot read current default gateway`) are carried underneath, in its
+words rather than paraphrased, because that text is what you search for next.
+
+What the matching has to get right:
+
+- **`route <net> [netmask] [gateway] [metric]`**, where everything after the first field is
+  optional. No netmask means `255.255.255.255`, so a bare `route 172.16.9.5` is one address — and
+  `ip route` prints a /32 without its prefix length, so the comparison is on parsed networks, not
+  on strings.
+- **`redirect-gateway def1` installs `0.0.0.0/1` and `128.0.0.0/1`**, not a default route — that
+  is the whole point of `def1`, since two halves beat an existing default on specificity without
+  deleting it. Either shape counts as satisfied.
+- **Symbolic gateways** (`vpn_gateway`, `net_gateway`, `remote_host`) are shown as written.
+  OpenVPN resolves them itself, and the word the server sent is more use than the address it
+  happened to mean.
+- **`route-ipv6` is skipped.** The comparison is against the IPv4 table, so a v6 prefix would be
+  reported as rejected every single time.
+- **An option that will not parse is reported, not dropped.** OpenVPN did not install it either,
+  and the malformed text is the answer.
+
+And two cases where it deliberately says nothing at all:
+
+- **No `PUSH_REPLY` in view.** The controller keeps the reply aside from the 200-line log ring
+  precisely so this stays rare — it arrives once, at the start of a tunnel that may then stay up
+  for weeks — but a tunnel this app *adopted* rather than started never saw it. `seen: false`
+  produces an empty report rather than "everything was rejected". A comparison that lies once is
+  worse than one that is occasionally silent.
+- **An empty routing table.** That means the tunnel is down or going down, not that the server
+  was refused wholesale.
+
+*All* of the pushed routes missing is reported differently from some of them: it is one cause
+rather than several, and it points at `--route-nopull` or a `--pull-filter`, not at a route that
+failed to install.
+
+The comparison rides along on `GET /api/routes` rather than getting an endpoint of its own — it is
+derived from that very list, and fetching it separately would let the two halves be read a second
+apart and disagree.
 
 ## DNS
 

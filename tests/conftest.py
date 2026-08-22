@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
 
@@ -164,6 +165,8 @@ class FakeController:
         self.tunnel_scope = None
         self.connect_error: Exception | None = None
         self.disconnect_error: Exception | None = None
+        self.push_report = None
+        """Set to a PushReport to give /api/routes something to diff; None means no push seen."""
         self.whois_calls: list[list[str]] = []
         #: destination -> organisation, as a real lookup would resolve it.
         self.whois_orgs: dict[str, str] = {}
@@ -176,6 +179,11 @@ class FakeController:
 
     def routes(self) -> list[Route]:
         return list(self.route_list)
+
+    def pushed(self, installed=None):
+        from app.services.pushed import NOTHING_PUSHED
+
+        return self.push_report if self.push_report is not None else NOTHING_PUSHED
 
     def scope(self):
         from app.services.scope import EMPTY_SCOPE
@@ -347,7 +355,7 @@ def controller(
     connections: Connections,
     history: History,
     stored_connection,
-) -> OpenVpnController:
+) -> Iterator[OpenVpnController]:
     FakeClient.reset()
     runner = FakeRunner()
     instance = OpenVpnController(
@@ -359,7 +367,16 @@ def controller(
         notifier=notifier,
     )
     instance.runner = runner  # type: ignore[attr-defined]
-    return instance
+    yield instance
+    # A test that begins an attempt without settling it leaves a worker asleep on the credential
+    # prompt. It wakes on its timeout long after this test's database has been closed, and reports
+    # the failure into a handle that no longer exists -- swallowed by History, but it prints a
+    # traceback into the middle of whichever test happens to be running by then. Retiring the
+    # attempt is exactly what _superseded() makes a worker exit quietly for.
+    with instance._lock:
+        instance._attempt += 1
+    instance._auth_prompt.set()
+    instance._settled.set()
 
 
 @pytest.fixture

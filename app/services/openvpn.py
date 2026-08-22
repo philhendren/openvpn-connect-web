@@ -27,6 +27,8 @@ from app.services.connections import Connections, Resolved
 from app.services.history import History
 from app.services.management import ManagementClient, ManagementError, redact
 from app.services.notifications import NotifyContext
+from app.services.pushed import NOTHING_PUSHED, PushReport, find_reply
+from app.services.pushed import report as push_report
 from app.services.rooted import SUDO, HelperError, run_helper  # noqa: F401 -- re-exported for tests
 from app.services.routing import Route, read_routes
 from app.services.scope import EMPTY_SCOPE, TunnelScope, read_scope
@@ -127,6 +129,11 @@ class OpenVpnController:
         self._status = VpnStatus()
         self._client: ManagementClient | None = None
         self._log: deque[str] = deque(maxlen=200)
+        #: The PUSH_REPLY line, kept aside rather than left to age out of ``_log``. The buffer
+        #: holds the last 200 lines and the push arrives once, at the very start of a tunnel
+        #: that may then stay up for weeks -- and a rejected-routes table that goes blank after
+        #: a chatty rekey would be worse than no table at all.
+        self._push_reply: str | None = None
         self._auth_prompt = threading.Event()
         self._settled = threading.Event()
         self._pending_secret: str | None = None
@@ -223,6 +230,7 @@ class OpenVpnController:
                 state=STARTING, profile=resolved.name, detail="Launching OpenVPN..."
             )
             self._log.clear()
+            self._push_reply = None
             self._history.start_session(resolved.name)
             self._auth_prompt.clear()
             self._settled.clear()
@@ -280,6 +288,25 @@ class OpenVpnController:
             device=self._config.TUN_DEVICE,
             remote_ip=remote_ip,
             timeout=self._config.COMMAND_TIMEOUT_SECONDS,
+        )
+
+    def pushed(self, installed: list[Route] | None = None) -> PushReport:
+        """What the concentrator asked this client to route, and what of it never arrived.
+
+        ``installed`` is passed in by the routes view, which has just read the table anyway --
+        one ``ip route`` call per request, and no chance of the two halves of the comparison
+        describing different moments.
+
+        Falls back to scanning the log buffer when no push was captured, which covers a tunnel
+        this app adopted rather than started (:meth:`attach`) and still has the reply in view.
+        """
+        if not self._is_running():
+            return NOTHING_PUSHED
+        with self._lock:
+            reply = self._push_reply
+            lines = list(self._log)
+        return push_report(
+            reply or find_reply(lines), self.routes() if installed is None else installed, lines
         )
 
     def scope(self) -> TunnelScope:
@@ -670,6 +697,9 @@ class OpenVpnController:
         message = parts[2] if len(parts) == 3 else payload
         redacted = redact(message)
         self._log.append(redacted)
+        if "PUSH_REPLY" in redacted:
+            with self._lock:
+                self._push_reply = redacted
         self._history.append(redacted)
 
     def _advance(self, state: str, detail: str) -> bool:
