@@ -355,6 +355,80 @@ def test_routes_include_the_bypass_route_once_the_server_is_known(controller, co
     ]
 
 
+PUSH_REPLY = (
+    "PUSH: Received control message: 'PUSH_REPLY,route 5.20.0.0 255.252.0.0,"
+    "route 192.168.30.0 255.255.255.0,route-gateway 10.99.0.1,ping 10'"
+)
+
+
+def test_nothing_is_pushed_while_nothing_is_running(controller):
+    assert controller.pushed().seen is False
+    assert not [call for call in controller.runner.calls if "route" in call]
+
+
+def test_the_push_reply_is_compared_against_the_installed_routes(controller, config):
+    client = _start(controller, config)
+    config.pid_file.write_text(f"{os.getpid()}\n")
+    client.emit("LOG", f"1755600000,,{PUSH_REPLY}")
+    assert wait_for(lambda: controller.pushed().seen)
+    report = controller.pushed()
+    assert [route.destination for route in report.rejected] == ["192.168.30.0/24"]
+
+
+def test_the_push_reply_survives_the_log_buffer_rolling_over(controller, config):
+    """It arrives once, at the start of a tunnel that may then stay up for weeks."""
+    client = _start(controller, config)
+    config.pid_file.write_text(f"{os.getpid()}\n")
+    client.emit("LOG", f"1755600000,,{PUSH_REPLY}")
+    assert wait_for(lambda: controller.pushed().seen)
+    for n in range(400):
+        client.emit("LOG", f"1755600001,,TLS: soft reset {n}")
+    assert wait_for(lambda: "TLS: soft reset 399" in controller.snapshot().log_lines)
+
+    assert "PUSH_REPLY" not in " ".join(controller.snapshot().log_lines)
+    assert [route.destination for route in controller.pushed().rejected] == ["192.168.30.0/24"]
+
+
+def test_an_adopted_tunnel_falls_back_to_the_log_buffer(controller, config):
+    """attach() never saw the push arrive, so the buffer is the only place left to look."""
+    _start(controller, config)
+    config.pid_file.write_text(f"{os.getpid()}\n")
+    controller._push_reply = None
+    controller._log.append(PUSH_REPLY)
+    assert [route.destination for route in controller.pushed().rejected] == ["192.168.30.0/24"]
+
+
+def test_a_new_attempt_forgets_the_previous_push(controller, config):
+    """Otherwise a reconnect compares this tunnel's routes against the last tunnel's push."""
+    client = _start(controller, config)
+    client.emit("LOG", f"1755600000,,{PUSH_REPLY}")
+    assert wait_for(lambda: controller._push_reply is not None)
+    client.emit("STATE", "1755600000,EXITING,SIGTERM,,,,,")
+    assert wait_for(lambda: controller.snapshot().state == DISCONNECTED)
+
+    second = _start(controller, config)
+    assert controller._push_reply is None
+    # Settle the second attempt rather than leaving its worker waiting on a prompt that never
+    # comes: it outlives the test, and the database it reports the timeout to is closed by then.
+    second.emit("PASSWORD", "Need 'Auth' username/password SC:1,Enter Authenticator Code")
+    second.emit("STATE", "1755600000,CONNECTED,SUCCESS,10.99.1.21,14.75.69.22,,,")
+    assert wait_for(lambda: controller.snapshot().state == CONNECTED)
+
+
+def test_the_installed_routes_are_read_once_per_comparison(controller, config):
+    """The view has the table already; re-reading it would let the two halves disagree."""
+    client = _start(controller, config)
+    config.pid_file.write_text(f"{os.getpid()}\n")
+    client.emit("LOG", f"1755600000,,{PUSH_REPLY}")
+    assert wait_for(lambda: controller._push_reply is not None)
+
+    installed = controller.routes()
+    before = len([call for call in controller.runner.calls if "route" in call])
+    controller.pushed(installed)
+    after = len([call for call in controller.runner.calls if "route" in call])
+    assert after == before
+
+
 def test_the_tun_device_comes_from_config(config, connections, history):
     """Both the address lookup and the route list must follow VPN_CONNECT_TUN_DEVICE."""
     from dataclasses import replace as _replace

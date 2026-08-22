@@ -450,6 +450,62 @@ Two rows are tagged because they are not pushed routes:
 `GET /api/routes` and deliberately kept off `/api/status`, which the page polls every few seconds.
 The page refetches it when the tunnel changes state, and the **Refresh** button forces a re-read.
 
+### Pushed, but not installed
+
+Reading the kernel is the right call, but it has one blind spot: a table can only show what is
+*there*. The failure it cannot show is the opposite one — the server pushes a subnet, the client
+declines it, the tunnel comes up green, and that one range is unreachable with nothing anywhere
+saying so.
+
+So the push is parsed as well, and the two are diffed. `app/services/pushed.py` is pure string and
+set work — no subprocess, no I/O — over the single `PUSH_REPLY` line the management interface
+delivers as a `>LOG` event:
+
+```
+PUSH: Received control message: 'PUSH_REPLY,route 10.20.0.0 255.255.0.0,route-gateway 10.20.30.1,…'
+```
+
+Anything pushed and not present in the kernel table is listed under the routes, with the option
+verbatim in a **Pushed as** column — that string is what you quote at whoever runs the
+concentrator. Any of OpenVPN's own route complaints still in the log (`route add command failed`,
+`needs a gateway parameter`, `Cannot read current default gateway`) are carried underneath, in its
+words rather than paraphrased, because that text is what you search for next.
+
+What the matching has to get right:
+
+- **`route <net> [netmask] [gateway] [metric]`**, where everything after the first field is
+  optional. No netmask means `255.255.255.255`, so a bare `route 172.16.9.5` is one address — and
+  `ip route` prints a /32 without its prefix length, so the comparison is on parsed networks, not
+  on strings.
+- **`redirect-gateway def1` installs `0.0.0.0/1` and `128.0.0.0/1`**, not a default route — that
+  is the whole point of `def1`, since two halves beat an existing default on specificity without
+  deleting it. Either shape counts as satisfied.
+- **Symbolic gateways** (`vpn_gateway`, `net_gateway`, `remote_host`) are shown as written.
+  OpenVPN resolves them itself, and the word the server sent is more use than the address it
+  happened to mean.
+- **`route-ipv6` is skipped.** The comparison is against the IPv4 table, so a v6 prefix would be
+  reported as rejected every single time.
+- **An option that will not parse is reported, not dropped.** OpenVPN did not install it either,
+  and the malformed text is the answer.
+
+And two cases where it deliberately says nothing at all:
+
+- **No `PUSH_REPLY` in view.** The controller keeps the reply aside from the 200-line log ring
+  precisely so this stays rare — it arrives once, at the start of a tunnel that may then stay up
+  for weeks — but a tunnel this app *adopted* rather than started never saw it. `seen: false`
+  produces an empty report rather than "everything was rejected". A comparison that lies once is
+  worse than one that is occasionally silent.
+- **An empty routing table.** That means the tunnel is down or going down, not that the server
+  was refused wholesale.
+
+*All* of the pushed routes missing is reported differently from some of them: it is one cause
+rather than several, and it points at `--route-nopull` or a `--pull-filter`, not at a route that
+failed to install.
+
+The comparison rides along on `GET /api/routes` rather than getting an endpoint of its own — it is
+derived from that very list, and fetching it separately would let the two halves be read a second
+apart and disagree.
+
 ## DNS
 
 The **DNS** card manages split-DNS rules — domain-scoped forwarders (send this domain's lookups to

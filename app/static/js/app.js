@@ -41,6 +41,12 @@
   const routesCount = document.getElementById("routes-count");
   const routesFilter = document.getElementById("routes-filter");
   const routesRefresh = document.getElementById("routes-refresh");
+  const rejectedBlock = document.getElementById("routes-rejected");
+  const rejectedBody = document.getElementById("routes-rejected-body");
+  const rejectedLead = document.getElementById("routes-rejected-lead");
+  const rejectedCount = document.getElementById("routes-rejected-count");
+  const rejectedSaid = document.getElementById("routes-rejected-said");
+  const rejectedNotes = document.getElementById("routes-rejected-notes");
   const dnsCount = document.getElementById("dns-count");
   const dnsStatus = document.getElementById("dns-status");
   const dnsStatusHeadline = document.getElementById("dns-status-headline");
@@ -70,6 +76,7 @@
   let routesDevice = "tun0";
   let routesLoaded = false;
   let routesKey = null;   // state + tunnel IP; routes are refetched when this changes
+  let pushReport = null;  // the PUSH_REPLY comparison that came back with the routes
   const whoisOrgs = {};     // destination -> org string | null (looked up, no name found)
   const whoisPending = new Set();   // destinations currently being resolved
   const whoisFailed = new Set();    // destinations whose last lookup errored -- retried next time
@@ -318,21 +325,117 @@
     }
   }
 
+  /* --- pushed but not installed -----------------------------------------
+     The table above can only show what is there. This one shows what was asked for and is not,
+     which is the failure that looks like nothing at all: the tunnel connects, the status is
+     green, and one internal range is quietly unreachable. */
+
+  function rejectedRow(route) {
+    const tr = document.createElement("tr");
+
+    const dst = document.createElement("td");
+    dst.className = "dst";
+    if (route.readable) {
+      dst.textContent = route.destination;
+      if (route.catch_all) {
+        const tag = document.createElement("span");
+        tag.className = "route-tag";
+        tag.textContent = "all traffic";
+        tag.title = "redirect-gateway: the server asked for every destination, not one prefix.";
+        dst.append(tag);
+      }
+    } else {
+      /* Nothing to show but the text itself -- and that is the answer, since OpenVPN will not
+         have made sense of it either. */
+      dst.textContent = "Could not be read";
+      dst.classList.add("muted");
+    }
+
+    const via = document.createElement("td");
+    via.textContent = route.gateway || "—";
+    if (!route.gateway) via.className = "muted";
+
+    const size = document.createElement("td");
+    size.className = "text-end";
+    size.textContent = route.addresses === null || route.addresses === undefined
+      ? "—"
+      : route.addresses.toLocaleString();
+
+    const option = document.createElement("td");
+    option.className = "pushed-as";
+    option.textContent = route.option;
+    option.title = route.option;
+
+    tr.append(dst, via, size, option);
+    return tr;
+  }
+
+  function renderRejected() {
+    if (!rejectedBlock) return;
+    const report = pushReport || {};
+    const rejected = Array.isArray(report.rejected) ? report.rejected : [];
+
+    /* seen === false means the PUSH_REPLY was never in view -- an adopted tunnel, or one whose
+       reply has scrolled out of the log buffer. Say nothing at all rather than report an empty
+       comparison as a clean bill of health. */
+    if (!report.seen || !rejected.length) {
+      rejectedBlock.hidden = true;
+      if (rejectedCount) rejectedCount.hidden = true;
+      return;
+    }
+
+    rejectedBlock.hidden = false;
+    rejectedBody.replaceChildren(...rejected.map(rejectedRow));
+
+    if (rejectedCount) {
+      rejectedCount.hidden = false;
+      rejectedCount.textContent = `${rejected.length} not installed`;
+    }
+
+    if (rejectedLead) {
+      /* All of them missing is one cause, not N of them -- and it points somewhere completely
+         different from a single prefix failing, so it gets its own sentence. */
+      rejectedLead.textContent = report.wholesale
+        ? `The server pushed ${report.count} route${report.count === 1 ? "" : "s"} and none of ` +
+          "them reached the routing table. That is usually one cause rather than several: the " +
+          "routes were not pulled at all (--route-nopull, or a --pull-filter that drops them)."
+        : `The server asked this client to route ${rejected.length} destination` +
+          `${rejected.length === 1 ? "" : "s"} that ${rejected.length === 1 ? "is" : "are"} ` +
+          "not in the table above. Traffic to them is not going through the tunnel — and " +
+          "nothing else on this page will show that.";
+    }
+
+    const notes = Array.isArray(report.notes) ? report.notes : [];
+    if (rejectedNotes) {
+      rejectedNotes.hidden = !notes.length;
+      rejectedNotes.replaceChildren(...notes.map((text) => {
+        const li = document.createElement("li");
+        li.textContent = text;
+        return li;
+      }));
+    }
+    if (rejectedSaid) rejectedSaid.hidden = !notes.length;
+  }
+
   async function loadRoutes() {
     if (!routesBody) return;
     try {
       const result = await api("/api/routes");
       routes = Array.isArray(result.routes) ? result.routes : [];
       routesDevice = result.device || routesDevice;
+      pushReport = result.pushed || null;
       routesLoaded = true;
     } catch (err) {
       routes = [];
+      pushReport = null;
       routesLoaded = true;
       if (routesCount) routesCount.textContent = "—";
       routesBody.replaceChildren(emptyRow(`Could not read the routing table: ${err.message}`));
+      renderRejected();
       return;
     }
     renderRoutes();
+    renderRejected();
     ensureWhois();
   }
 

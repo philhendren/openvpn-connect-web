@@ -391,6 +391,50 @@ def test_routes_endpoint_is_empty_when_the_tunnel_is_down(auth_client, fake_cont
     assert payload["routes"] == []
 
 
+def test_routes_endpoint_reports_no_push_when_none_was_seen(auth_client):
+    payload = auth_client.get("/api/routes").get_json()
+    assert payload["pushed"] == {
+        "seen": False,
+        "count": 0,
+        "wholesale": False,
+        "rejected": [],
+        "notes": [],
+    }
+
+
+def test_routes_endpoint_carries_the_rejected_routes(auth_client, fake_controller):
+    from app.services.pushed import report
+
+    fake_controller.push_report = report(
+        "PUSH_REPLY,route 5.20.0.0 255.252.0.0,route 192.168.30.0 255.255.255.0",
+        fake_controller.route_list,
+    )
+    payload = auth_client.get("/api/routes").get_json()
+    assert payload["pushed"]["seen"] is True
+    assert payload["pushed"]["count"] == 2
+    assert [row["destination"] for row in payload["pushed"]["rejected"]] == ["192.168.30.0/24"]
+
+
+def test_the_push_comparison_rides_along_with_the_routes(auth_client, fake_controller):
+    """One request, so the two halves of the comparison cannot be read a second apart."""
+    assert auth_client.get("/api/routes").status_code == 200
+    assert "pushed" not in auth_client.get("/api/scope").get_json()
+
+
+def test_the_index_page_has_a_rejected_routes_table_inside_the_routes_panel(auth_client):
+    html = auth_client.get("/").get_data(as_text=True)
+    assert 'id="routes-rejected-body"' in html
+    assert html.index('id="routes-body"') < html.index('id="routes-rejected-body"')
+    assert html.index('id="routes-rejected-body"') < html.index('id="panel-dns"')
+
+
+def test_the_rejected_routes_table_starts_hidden(auth_client):
+    """A permanently empty table trains people to stop reading the one place that warns them."""
+    html = auth_client.get("/").get_data(as_text=True)
+    block = html[html.index('id="routes-rejected"') : html.index('id="routes-rejected-body"')]
+    assert "hidden" in block.split(">", 1)[0]
+
+
 def test_status_does_not_carry_the_route_list(auth_client):
     """Routes are deliberately kept off the polled endpoint -- it runs to hundreds of rows."""
     assert "routes" not in auth_client.get("/api/status").get_json()
