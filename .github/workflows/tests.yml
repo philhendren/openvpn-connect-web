@@ -191,4 +191,15 @@ jobs:
           git add .github/coverage.json
           # [skip ci] because this commit is a consequence of a run, not a reason for another one.
           git commit -m "Update coverage badge data [skip ci]"
-          git push
+          # ui.yml's badge job pushes to main on the same event, so these two race. Whoever
+          # arrives second is rejected as non-fast-forward; rebasing and retrying is enough
+          # because they touch different files and neither cares about the other's content.
+          for attempt in 1 2 3; do
+            if git push; then
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}); rebasing onto main and retrying."
+            git pull --rebase origin main
+          done
+          echo "Could not push the badge data after three attempts." >&2
+          exit 1

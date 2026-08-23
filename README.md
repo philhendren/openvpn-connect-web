@@ -2,6 +2,8 @@
 
 [![tests](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml/badge.svg)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fmain%2F.github%2Fcoverage.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
+[![journeys](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml/badge.svg)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml)
+[![journey coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fmain%2F.github%2Fjourneys.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml)
 
 > [!IMPORTANT]
 > **Not the OpenVPN Connect app.** This is `openvpn-connect-web`: an unofficial, self-hosted web
@@ -859,10 +861,19 @@ summary and uploaded as an artifact. The **floor is 90%**, and it lives in `pypr
 than in the workflow, so CI fails on the same number you do locally — a floor to catch a change
 that guts the tests, not a target to chase.
 
-The two badges at the top of this file are that run, made visible. The coverage one reads
-`.github/coverage.json`, which a `main`-only job rewrites after a successful run — no external
-account and no access token, so the number never leaves GitHub. That job is the only one granted
-`contents: write`, it touches that one path, and a pull request never reaches it.
+The four badges at the top of this file are those runs, made visible: the two suites, and what each
+one covers. The coverage figures read `.github/coverage.json` and `.github/journeys.json`, which a
+`main`-only job in each workflow rewrites after a successful run — no external account and no
+access token, so the numbers never leave GitHub. Those two jobs are the only ones granted
+`contents: write`, each touches exactly one path, and a pull request never reaches either.
+
+**The journey figure is far lower than the other one, and that is the design rather than a gap.**
+It is the share of `app/` that seven browser scenarios happen to execute, and those scenarios exist
+to defend documented promises, not to reach the code — everything they do not touch is covered by
+the suite the first badge reports. So it is rendered flat blue, with no floor and no threshold
+colours: there is nothing here to pass or fail, and a red-amber-green scale would be inventing a
+verdict this project does not hold. Read it as *how much of the app a browser actually walks
+through*, which is a fact worth seeing, and not as a score.
 
 The screenshots in [USAGE.md](USAGE.md) are build artefacts, like the icons: regenerate them with
 `uv run --group screenshots python tools/screenshots.py`, which seeds a throwaway installation,
