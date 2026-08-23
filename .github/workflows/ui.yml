@@ -59,10 +59,47 @@ jobs:
       # locally gets Chrome by default -- the browser they already have, and the one the
       # screenshots are taken with -- but CI wants the build pinned by uv.lock, so that a
       # scenario going red is this repository changing rather than a runner image changing.
+      #
+      # --cov-fail-under=0 is not a weakening: pyproject.toml's 90% floor is a promise about the
+      # unit suite, and this suite is deliberately bounded to documented promises, so it lands
+      # around half that by design. Left at 90 the browser job would fail on a number it was never
+      # meant to reach. The floor that means something still guards tests.yml, untouched.
+      #
+      # The app is served in a *thread* by tools.screenshots.serve(), not a subprocess, so
+      # coverage.py traces it with no instrumentation of its own. That is the only reason this
+      # number is cheap enough to be worth publishing.
       - name: Run the journeys
         env:
           VPN_UI_CHANNEL: ""
-        run: uv run --frozen pytest uitests/ -q
+        run: |
+          uv run --frozen pytest uitests/ -q \
+            --cov=app --cov-report=term-missing --cov-fail-under=0
+
+      # Deliberately blue rather than a red-amber-green scale. There is no floor for this number
+      # and no target to chase -- the suite covers documented promises and nothing else, so a
+      # traffic light would be inventing a verdict the project does not hold. Same instinct as the
+      # tunnel scope panel styling "split" and "full" identically: state the fact, do not grade it.
+      #
+      # Labelled "journey coverage", never plain "coverage", so it cannot be read as a second and
+      # worse measurement of the thing tests.yml already reports.
+      # --fail-under=0 again, and it is not redundant: `coverage report` re-reads fail_under from
+      # pyproject.toml on its own account, so without it the command prints "Coverage failure:
+      # total of 50.1 is less than fail-under=90.0" onto stdout and that lands *inside* the JSON
+      # string. Caught by running this step locally rather than by reading it.
+      - name: Badge data
+        run: |
+          total="$(uv run --frozen coverage report --format=total --precision=1 --fail-under=0)"
+          echo "::notice title=Journey coverage::Journeys exercise ${total}% of app/"
+          printf '{"schemaVersion":1,"label":"journey coverage","message":"%s%%","color":"blue"}\n' \
+            "$total" > journeys.json
+          cat journeys.json
+
+      - name: Upload the badge data
+        uses: actions/upload-artifact@v7
+        with:
+          name: journeys-coverage
+          path: journeys.json
+          retention-days: 14
 
       # A failed journey is a DOM and a network log, not a stack trace. Without this the only way
       # to read a red run is to reproduce it locally, which is how a browser suite becomes a
@@ -75,3 +112,50 @@ jobs:
           path: uitests/artifacts/
           retention-days: 14
           if-no-files-found: ignore
+
+  # The README's journey-coverage badge reads .github/journeys.json from the default branch. Same
+  # shape, same fencing and same reasoning as the `badge` job in tests.yml: pushes to main only,
+  # the sole contents: write grant in this workflow, exactly one path, and a pull request -- forks
+  # included -- never reaches it.
+  badge:
+    name: journey coverage badge
+    needs: journeys
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      # v8 targets node24; v6 is still node20 -- see the version table in the project notes.
+      - uses: actions/download-artifact@v8
+        with:
+          name: journeys-coverage
+          path: artifact
+
+      - name: Commit the badge data if it changed
+        run: |
+          mv artifact/journeys.json .github/journeys.json
+          if git diff --quiet -- .github/journeys.json; then
+            echo "Journey coverage is unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/journeys.json
+          # [skip ci] because this commit is a consequence of a run, not a reason for another one.
+          git commit -m "Update journey coverage badge data [skip ci]"
+          # tests.yml's badge job pushes to main on the same event, so these two race. Whoever
+          # arrives second is rejected as non-fast-forward; rebasing and retrying is enough
+          # because they touch different files and neither cares about the other's content.
+          for attempt in 1 2 3; do
+            if git push; then
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}); rebasing onto main and retrying."
+            git pull --rebase origin main
+          done
+          echo "Could not push the badge data after three attempts." >&2
+          exit 1
