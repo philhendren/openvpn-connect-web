@@ -1,8 +1,8 @@
 # OpenVPN Connect Web
 
-[![tests](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml/badge.svg)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
+[![tests](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
 [![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fmain%2F.github%2Fcoverage.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
-[![journeys](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml/badge.svg)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml)
+[![journeys](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml/badge.svg?branch=main&event=push)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml)
 [![journey coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fmain%2F.github%2Fjourneys.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml)
 
 > [!IMPORTANT]
@@ -119,7 +119,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-**What I would say in its defence:** the tests are real (751, and they never touch the real system —
+**What I would say in its defence:** the tests are real (752, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout, and a further suite drives the
 page in a real browser), the privilege boundary is narrow and deliberate (one root helper, a fixed
 set of verbs, no caller-supplied paths or content crossing into root), and several of the bugs
