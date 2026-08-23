@@ -1,5 +1,8 @@
 # OpenVPN Connect Web
 
+[![tests](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml/badge.svg)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
+[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fmain%2F.github%2Fcoverage.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
+
 > [!IMPORTANT]
 > **Not the OpenVPN Connect app.** This is `openvpn-connect-web`: an unofficial, self-hosted web
 > panel that drives the `openvpn` binary already installed on your own machine. It is not
@@ -855,6 +858,11 @@ check of the shell that makes up the privilege boundary. Branch coverage is repo
 summary and uploaded as an artifact. The **floor is 90%**, and it lives in `pyproject.toml` rather
 than in the workflow, so CI fails on the same number you do locally — a floor to catch a change
 that guts the tests, not a target to chase.
+
+The two badges at the top of this file are that run, made visible. The coverage one reads
+`.github/coverage.json`, which a `main`-only job rewrites after a successful run — no external
+account and no access token, so the number never leaves GitHub. That job is the only one granted
+`contents: write`, it touches that one path, and a pull request never reaches it.
 
 The screenshots in [USAGE.md](USAGE.md) are build artefacts, like the icons: regenerate them with
 `uv run --group screenshots python tools/screenshots.py`, which seeds a throwaway installation,
