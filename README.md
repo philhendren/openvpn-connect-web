@@ -1,5 +1,6 @@
 # OpenVPN Connect Web
 
+> [!IMPORTANT]
 > **Not the OpenVPN Connect app.** This is `openvpn-connect-web`: an unofficial, self-hosted web
 > panel that drives the `openvpn` binary already installed on your own machine. It is not
 > affiliated with or endorsed by OpenVPN Inc., and it is not their *OpenVPN Connect* client.
