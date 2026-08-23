@@ -17,7 +17,7 @@ from app.services.openvpn import (
     OpenVpnController,
     VpnError,
 )
-from tests.conftest import FakeClient, wait_for
+from tests.conftest import FakeClient, quiesce, wait_for
 
 
 def _make_socket(config) -> None:
@@ -680,3 +680,24 @@ def test_a_superseded_worker_cannot_fail_the_attempt_that_replaced_it(
 
     assert controller.snapshot().state == CONNECTED
     assert _row(history, session)["ended_at"] is None
+
+
+def test_a_stranded_worker_is_gone_before_its_database_closes(controller, config):
+    """A connect worker must not outlive the test that started it.
+
+    This is the regression test for the segfault that turned CI red on 2026-08-23. The worker
+    reaches ``store.end_session`` on its own thread, and ``app/db.py`` connects with
+    ``check_same_thread=False``, so nothing stops it writing through a handle the ``db`` fixture
+    is about to close. Closing a sqlite3 connection while another thread is inside it is a
+    use-after-free in the C extension: it does not raise, it kills the interpreter.
+
+    So the invariant is not "the worker stays quiet", which retiring the attempt already bought.
+    It is that the worker has actually **left** by the time teardown returns.
+    """
+    _start(controller, config)  # never settled: this worker is now asleep on the credential prompt
+    worker = controller._worker
+    assert worker is not None and worker.is_alive()
+
+    quiesce(controller)
+
+    assert not worker.is_alive()

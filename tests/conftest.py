@@ -348,6 +348,50 @@ def notifier() -> FakeNotifier:
     return FakeNotifier()
 
 
+#: How long to wait for a stranded worker to leave. Generous on purpose: the test config's own
+#: timeouts are 1s and 2s, so a worker that has to sleep out both still has room, and the only way
+#: to spend the whole budget is a worker that is genuinely stuck -- which is worth failing over.
+WORKER_EXIT_TIMEOUT = 10.0
+
+
+def quiesce(instance: OpenVpnController) -> None:
+    """Leave no connect worker running, because one that outlives its database segfaults CPython.
+
+    A test that begins an attempt without settling it leaves a worker asleep on the credential
+    prompt. Retiring the attempt is what ``_superseded()`` makes such a worker exit quietly for,
+    and that alone used to be the whole teardown -- but retiring is only advisory. It does not
+    wake the worker and it does not wait for it, so the worker was still free to be *inside*
+    ``store.end_session`` when the ``db`` fixture closed the connection underneath it.
+
+    ``app/db.py`` connects with ``check_same_thread=False``, so sqlite3 permits that cross-thread
+    use and raises nothing; freeing the handle while another thread is in the middle of it is a
+    use-after-free in the C extension. It does not raise, it **segfaults the interpreter** -- which
+    is what turned a green suite red on Python 3.13 in CI on 2026-08-23, with the crashing thread
+    stopped in ``end_session`` under ``_connect_worker``. A swallowed traceback in an unrelated
+    test was the polite version of this bug; exit code 139 is the honest one.
+
+    So: retire the attempt first, so anything that wakes observes it and leaves without reporting;
+    then wake anything asleep on a timeout, so it goes now rather than during a later test; then
+    **join**, which is the part that actually makes it safe. Waking before joining only costs a
+    worker its remaining sleep -- any writes it still makes go to a connection that is open,
+    because this fixture tears down before the ``db`` fixture it was built on.
+    """
+    with instance._lock:
+        instance._attempt += 1
+    instance._auth_prompt.set()
+    instance._settled.set()
+    worker = instance._worker
+    if worker is None:
+        return
+    worker.join(timeout=WORKER_EXIT_TIMEOUT)
+    # Never let this pass quietly. A worker still running here is one the next test's database is
+    # about to be closed underneath, and the failure it causes lands somewhere else entirely.
+    assert not worker.is_alive(), (
+        f"a connect worker was still running {WORKER_EXIT_TIMEOUT}s after its attempt was retired; "
+        "the database is about to close underneath it"
+    )
+
+
 @pytest.fixture
 def controller(
     config: Config,
@@ -368,13 +412,7 @@ def controller(
     )
     instance.runner = runner  # type: ignore[attr-defined]
     yield instance
-    # A test that begins an attempt without settling it leaves a worker asleep on the credential
-    # prompt. It wakes on its timeout long after this test's database has been closed, and reports
-    # the failure into a handle that no longer exists -- swallowed by History, but it prints a
-    # traceback into the middle of whichever test happens to be running by then. Retiring the
-    # attempt is exactly what _superseded() makes a worker exit quietly for.
-    with instance._lock:
-        instance._attempt += 1
+    quiesce(instance)
     instance._auth_prompt.set()
     instance._settled.set()
 
