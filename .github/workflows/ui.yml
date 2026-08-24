@@ -117,11 +117,15 @@ jobs:
   # shape, same fencing and same reasoning as the `badge` job in tests.yml: pushes to main only,
   # the sole contents: write grant in this workflow, exactly one path, and a pull request -- forks
   # included -- never reaches it.
+  # Same shape, same reasoning and the same two lessons as the badge job in tests.yml: the data
+  # goes to the unprotected `badges` branch because main refuses a direct push, and a failure here
+  # must not be allowed to report that the browser scenarios failed when they passed.
   badge:
     name: journey coverage badge
     needs: journeys
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     permissions:
       contents: write
@@ -135,27 +139,41 @@ jobs:
           name: journeys-coverage
           path: artifact
 
-      - name: Commit the badge data if it changed
+      - name: Publish the badge data
         run: |
-          mv artifact/journeys.json .github/journeys.json
-          if git diff --quiet -- .github/journeys.json; then
-            echo "Journey coverage is unchanged; nothing to commit."
-            exit 0
-          fi
+          set -euo pipefail
+          NAME="journeys.json"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/journeys.json
-          # [skip ci] because this commit is a consequence of a run, not a reason for another one.
-          git commit -m "Update journey coverage badge data [skip ci]"
-          # tests.yml's badge job pushes to main on the same event, so these two race. Whoever
-          # arrives second is rejected as non-fast-forward; rebasing and retrying is enough
-          # because they touch different files and neither cares about the other's content.
+
           for attempt in 1 2 3; do
-            if git push; then
-              exit 0
-            fi
-            echo "Push rejected (attempt ${attempt}); rebasing onto main and retrying."
-            git pull --rebase origin main
+              # Re-read the branch at the top of every attempt, so a retry rebuilds on whatever
+              # is there now rather than replaying a stale tip. It is also what makes the two
+              # workflows' badge jobs safe to run at once: they write different files, and
+              # whichever arrives second simply builds on the first.
+              if git fetch --quiet origin badges 2>/dev/null; then
+                  git checkout --quiet -B badges FETCH_HEAD
+              else
+                  # First run only. An orphan branch holding badge data and nothing else -- it
+                  # exists to be fetched by an image proxy, not read by a person, so it carries
+                  # none of main's history or files.
+                  git checkout --quiet --orphan badges
+                  git rm -rqf --cached . 2>/dev/null || true
+                  find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+              fi
+
+              cp "artifact/$NAME" "$NAME"
+              git add "$NAME"
+              if git diff --cached --quiet; then
+                  echo "$NAME is unchanged; nothing to publish."
+                  exit 0
+              fi
+              git commit --quiet -m "Update $NAME [skip ci]"
+              if git push --quiet origin badges; then
+                  echo "Published $NAME."
+                  exit 0
+              fi
+              echo "Push rejected (attempt $attempt); rebuilding on the current tip."
           done
-          echo "Could not push the badge data after three attempts." >&2
+          echo "Could not publish $NAME after three attempts." >&2
           exit 1
