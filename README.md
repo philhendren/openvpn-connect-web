@@ -109,7 +109,7 @@ None of this is privileged information. It is just information nobody bothers to
   not a fleet. There is one login, no user accounts, no multi-tenancy. It should never be exposed
   to the internet — put it on your LAN or behind a VPN of its own (yes, really).
 - **It is an observer, not an enforcer.** It will tell you the tunnel is taking all your DNS; it
-  will not stop your employer configuring it that way. Where it can act, it says so plainly, and
+  will not stop the VPN administrator configuring it that way. Where it can act, it says so plainly, and
   where it cannot, it says that too.
 
 ## Vibe-coded, on purpose
