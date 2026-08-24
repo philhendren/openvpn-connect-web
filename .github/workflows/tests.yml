@@ -156,7 +156,7 @@ jobs:
       - name: oxlint
         run: npx --yes oxlint@1.79.0 -c .oxlintrc.json app/static/js/
 
-  # The README's coverage badge reads .github/coverage.json from the default branch through
+  # The README's coverage badge reads coverage.json from the `badges` branch through
   # shields.io, so something has to keep that file current. This is the only job that writes to
   # the repository, and it is fenced in three ways: it runs on pushes to main and nowhere else,
   # it is the only job granted contents: write, and it touches exactly one path. A pull request
@@ -187,7 +187,10 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: coverage
-          path: artifact
+          # Staged outside the working tree on purpose. The orphan-branch path below clears
+          # the checkout down to .git, and an artifact downloaded *into* the tree goes with
+          # it -- which is why the branch could never rebuild itself after being deleted.
+          path: ${{ runner.temp }}/badge
 
       - name: Publish the badge data
         run: |
@@ -204,15 +207,16 @@ jobs:
               if git fetch --quiet origin badges 2>/dev/null; then
                   git checkout --quiet -B badges FETCH_HEAD
               else
-                  # First run only. An orphan branch holding badge data and nothing else -- it
-                  # exists to be fetched by an image proxy, not read by a person, so it carries
-                  # none of main's history or files.
-                  git checkout --quiet --orphan badges
-                  git rm -rqf --cached . 2>/dev/null || true
-                  find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+                  # First run, or after somebody deletes the branch. Branched from main rather
+                  # than orphaned: GitHub offers "Compare & pull request" for any recently
+                  # pushed branch, there is no setting to turn that off, and the one workaround
+                  # -- open a pull request and close it -- cannot be applied to a branch with no
+                  # common ancestor, because GitHub refuses to compare unrelated histories.
+                  # So the branch has to stay comparable for the prompt to be dismissable.
+                  git checkout --quiet -B badges HEAD
               fi
 
-              cp "artifact/$NAME" "$NAME"
+              cp "$RUNNER_TEMP/badge/$NAME" "$NAME"
               git add "$NAME"
               if git diff --cached --quiet; then
                   echo "$NAME is unchanged; nothing to publish."
