@@ -447,6 +447,43 @@
       <div class="card-body">
         <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
           <button class="panel-toggle collapsed" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#panel-firewall" aria-expanded="false"
+                  aria-controls="panel-firewall">
+            <span class="panel-chevron" aria-hidden="true"></span>
+            <span class="card-title-sm mb-0">Inbound protection</span>
+          </button>
+          {# Read while the panel is shut, per the panel-badge contract in USAGE.md. #}
+          <span class="badge route-count" id="fw-badge">—</span>
+        </div>
+        <div class="collapse panel-body" id="panel-firewall" data-panel="firewall">
+          <div id="fw-alert" class="alert alert-secondary small mt-2">
+            <p class="scope-verdict mb-1" id="fw-headline">Checking…</p>
+            <p class="mb-0" id="fw-detail"></p>
+          </div>
+
+          <div class="form-check form-switch mt-3">
+            <input class="form-check-input" type="checkbox" role="switch" id="fw-toggle">
+            <label class="form-check-label" for="fw-toggle">
+              Block all incoming traffic on the VPN interface
+            </label>
+          </div>
+
+          <p class="small text-body-secondary mt-2 mb-0">
+            Traffic this machine starts still works normally &mdash; replies come back as part of
+            the connection you opened. What this stops is anything on the remote network
+            <em>starting</em> a connection to this machine: SSH, the web server, containers, the
+            resolver, and this panel itself. It stays armed while the tunnel is down, when it
+            matches nothing, so there is never a moment where the tunnel is up and unfiltered.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+  <section class="col-12">
+    <div class="card">
+      <div class="card-body">
+        <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+          <button class="panel-toggle collapsed" type="button" data-bs-toggle="collapse"
                   data-bs-target="#panel-dns" aria-expanded="false" aria-controls="panel-dns">
             <span class="panel-chevron" aria-hidden="true"></span>
             <span class="card-title-sm mb-0">DNS</span>

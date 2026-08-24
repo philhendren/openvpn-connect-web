@@ -1540,6 +1540,111 @@
      alone and skips the resolver check; opening it fires shown.bs.collapse and gets both. */
   if (dnsPanel && !dnsPanel.classList.contains("show")) loadDns({ verdict: false });
 
+  /* ---- inbound protection on the tunnel ---------------------------------
+     The badge and the switch are both driven by what the helper reports, never by the checkbox's
+     own position: a switch sitting at "on" while nothing is filtering is the one outcome this
+     feature must never produce. So render() takes the server's state and moves the checkbox to
+     match it, rather than the other way round. */
+  const fwToggle = document.getElementById("fw-toggle");
+  const fwBadge = document.getElementById("fw-badge");
+  const fwAlert = document.getElementById("fw-alert");
+  const fwHeadline = document.getElementById("fw-headline");
+  const fwDetail = document.getElementById("fw-detail");
+  const fwPanel = document.getElementById("panel-firewall");
+
+  function renderFirewall(state) {
+    if (!fwBadge) return;
+    const armed = state.armed === true;
+    if (fwToggle) {
+      fwToggle.checked = state.intended === true;
+      fwToggle.disabled = state.status === "unavailable";
+    }
+
+    let badge = "off";
+    if (armed) badge = "blocking";
+    else if (state.unprotected) badge = "not in force";
+    else if (state.status === "unavailable") badge = "unavailable";
+    else if (state.status === "unknown") badge = "unknown";
+    fwBadge.textContent = badge;
+
+    let headline = "Incoming traffic on the VPN interface is allowed.";
+    let tone = "alert-secondary";
+    if (armed) {
+      headline = "Incoming traffic on the VPN interface is blocked.";
+      tone = "alert-success";
+    }
+    if (state.unprotected) {
+      headline = "Protection is switched on but is NOT in force.";
+      tone = "alert-danger";
+    } else if (state.status === "unavailable") {
+      headline = "This machine has no nftables, so this cannot be applied.";
+      tone = "alert-warning";
+    } else if (state.status === "unknown" && !state.intended) {
+      headline = "Cannot tell whether the VPN interface is filtered.";
+      tone = "alert-warning";
+    }
+
+    fwHeadline.textContent = headline;
+    fwAlert.className = `alert ${tone} small mt-2`;
+
+    const notes = [];
+    if (armed && typeof state.drops === "number") {
+      /* The counter is the evidence. Zero on a live tunnel means either nothing tried or the
+         rule is not on the path, and those are worth telling apart -- so say which it is
+         rather than implying success. */
+      notes.push(
+        state.drops > 0
+          ? `${state.drops.toLocaleString()} incoming packet${state.drops === 1 ? "" : "s"} dropped so far.`
+          : "Nothing has been dropped yet — either nothing has tried, or no tunnel has been up."
+      );
+    }
+    if (state.detail) notes.push(state.detail);
+    fwDetail.textContent = notes.join(" ");
+  }
+
+  async function loadFirewall() {
+    try {
+      renderFirewall(await api("/api/firewall"));
+    } catch (err) {
+      if (fwBadge) fwBadge.textContent = "unknown";
+      if (fwHeadline) fwHeadline.textContent = err.message;
+    }
+  }
+
+  if (fwToggle) {
+    fwToggle.addEventListener("change", async () => {
+      const wanted = fwToggle.checked;
+      fwToggle.disabled = true;
+      try {
+        renderFirewall(
+          await api("/api/firewall", {
+            method: "POST",
+            body: JSON.stringify({ enabled: wanted }),
+          })
+        );
+      } catch (err) {
+        /* A refusal (the helper cannot do it) leaves the setting untouched, so re-reading is what
+           puts the switch back where it belongs rather than guessing. */
+        if (fwHeadline) fwHeadline.textContent = err.message;
+        if (fwAlert) fwAlert.className = "alert alert-warning small mt-2";
+        await loadFirewall();
+      } finally {
+        fwToggle.disabled = false;
+      }
+    });
+  }
+
+  if (fwPanel) {
+    fwPanel.addEventListener("shown.bs.collapse", (e) => {
+      if (e.target === fwPanel) loadFirewall();
+    });
+  }
+
+  /* Boot-time load regardless of panel state, for the same reason as the DNS badge above: this
+     badge says whether the machine is protected, which is the last thing that should require
+     opening a panel to find out. */
+  loadFirewall();
+
   if (routesFilter) {
     routesFilter.addEventListener("input", renderRoutes);
   }

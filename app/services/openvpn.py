@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 from app.config import Config
 from app.services.connections import Connections, Resolved
+from app.services.firewall import FirewallUnavailable
 from app.services.history import History
 from app.services.management import ManagementClient, ManagementError, redact
 from app.services.notifications import NotifyContext
@@ -118,11 +119,15 @@ class OpenVpnController:
         runner=subprocess.run,
         client_factory=ManagementClient,
         notifier=None,
+        firewall=None,
     ) -> None:
         self._config = config
         self._connections = connections
         self._history = history
         self._notifier = notifier
+        #: Checked before a tunnel is started, never during. Optional so a controller can be
+        #: built without one; when absent, nothing is asserted.
+        self._firewall = firewall
         self._run = runner
         self._client_factory = client_factory
         self._lock = threading.RLock()
@@ -201,6 +206,17 @@ class OpenVpnController:
         Returns as soon as the attempt is under way; poll :meth:`snapshot` for the outcome.
         """
         otp = (otp or "").strip()
+
+        # Before anything else, and before any state is touched: if the operator asked for the
+        # tunnel's inbound traffic to be blocked and it is not actually being blocked, bringing
+        # the tunnel up would expose this machine to the remote network. Refusing is the whole
+        # reason that switch lives in the app rather than in a runbook -- the moment it matters
+        # is the one before the interface exists.
+        if self._firewall is not None:
+            try:
+                self._firewall.guard_connect()
+            except FirewallUnavailable as exc:
+                raise VpnError(str(exc)) from exc
 
         # Decrypts the connection and writes its .ovpn out; raises if the vault is locked or
         # the name is unknown, both of which are operator-visible problems.

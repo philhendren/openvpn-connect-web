@@ -16,6 +16,7 @@ from app.services import store, vault
 from app.services.clients import Clients
 from app.services.connections import Connections
 from app.services.dns_rules import DnsRules
+from app.services.firewall import Firewall
 from app.services.history import History
 from app.services.openvpn import OpenVpnController, VpnStatus
 from app.services.routing import Route
@@ -276,6 +277,17 @@ def dns_rules(app_db, config, dns_runner):
 
 
 @pytest.fixture
+def firewall_runner() -> FakeRunner:
+    """Answers fw-status as disarmed, which is the state a fresh install is in."""
+    return FakeRunner(stdout="disarmed")
+
+
+@pytest.fixture
+def firewall(app_db, config, firewall_runner):
+    return Firewall(app_db, config, runner=firewall_runner)
+
+
+@pytest.fixture
 def seeded_topic(app_db):
     """A saved ntfy topic, matching what most notification tests assume is already configured."""
     store.save_notify(app_db, topic="existing-topic")
@@ -432,6 +444,7 @@ def app(
     connections: Connections,
     history: History,
     dns_rules: DnsRules,
+    firewall: Firewall,
 ):
     application = create_app(
         {
@@ -443,6 +456,10 @@ def app(
             "CONNECTIONS": connections,
             "HISTORY": history,
             "DNS_RULES": dns_rules,
+            # Pinned for the same reason as CLIENTS below, but with teeth: unpinned, create_app
+            # would build a Firewall around the real subprocess.run and the suite would shell out
+            # to sudo on whatever machine is running it.
+            "FIREWALL": firewall,
             # Pinned, not discovered: otherwise every test's deployment self-check depends on
             # whether the machine running the suite happens to have openvpn installed, and the
             # CI runners do not.

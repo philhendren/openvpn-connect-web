@@ -25,6 +25,7 @@ OPENVPN="@OPENVPN@"
 DNS_CONF="@DNS_CONF@"
 LEGACY_DNS_CONF="@LEGACY_DNS_CONF@"
 DNSMASQ_UNIT="@DNSMASQ_UNIT@"
+NFT="@NFT@"
 
 MGMT_SOCK="$RUN_DIR/mgmt.sock"
 PID_FILE="$VPN_DIR/openvpn.pid"
@@ -195,10 +196,91 @@ cmd_dns_apply() {
     die "dnsmasq rejected the new rules; $outcome."
 }
 
+# --- inbound protection on the tunnel ---------------------------------------
+#
+# fw-on/fw-off/fw-status take this file's "name in, never content" rule to its limit: they accept
+# no argument *and* read no staged file. The ruleset below is a literal in a root-owned script, so
+# the app can only ever choose between two predefined states -- it cannot express a rule. Changing
+# the policy means editing this template and re-running install.sh, which is deliberate: a web
+# panel must not be able to rewrite this machine's packet filter.
+#
+# Two details that are load-bearing:
+#
+#   * iifname, never iif. iifname is a per-packet string comparison, so these rules load happily
+#     while no tun interface exists and start matching the moment one appears. iif resolves the
+#     name to an interface *index* when the rule is added, which fails outright for an absent
+#     device and can bind to a stale index if it is recreated. That is the whole reason this can
+#     be armed once and left alone instead of being applied on connect.
+#   * The forward hook is not optional. A published container port is DNAT'd and then *forwarded*
+#     rather than delivered locally, so an input-only policy leaves it reachable from the tunnel.
+#
+# Deleting one named table is the only teardown. Never `nft flush ruleset` here: Docker and
+# Tailscale keep their own rules in their own tables and would go with it.
+NFT_TABLE="vpnconnect"
+
+nft_ruleset() {
+    cat <<'NFT'
+table inet vpnconnect {
+    chain input {
+        type filter hook input priority filter; policy accept;
+
+        # Return traffic for connections this box opened. `related` also carries ICMP errors,
+        # so dropping it would break path-MTU discovery -- the classic firewall bug where pings
+        # succeed and large transfers hang.
+        iifname "tun*" ct state established,related accept
+
+        iifname "tun*" counter drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy accept;
+
+        iifname "tun*" ct state established,related accept
+        iifname "tun*" counter drop
+    }
+}
+NFT
+}
+
+cmd_fw_on() {
+    [[ -x "$NFT" ]] || die "nftables is not installed ($NFT)."
+    # Replacing the table wholesale rather than adding to it, so repeat calls converge on the
+    # same state instead of stacking duplicate rules.
+    nft_ruleset | "$NFT" -f - || die "nftables rejected the ruleset."
+    echo "armed"
+}
+
+cmd_fw_off() {
+    [[ -x "$NFT" ]] || die "nftables is not installed ($NFT)."
+    if "$NFT" list table inet "$NFT_TABLE" >/dev/null 2>&1; then
+        "$NFT" delete table inet "$NFT_TABLE" || die "could not remove the ruleset."
+    fi
+    echo "disarmed"
+}
+
+# Prints one line the app parses: "armed <input-drops> <forward-drops>" or "disarmed".
+# The counters are the point -- they are what turns "the tunnel is filtered" from a claim into
+# evidence, and a live tunnel sitting at zero says either nothing tried or the rule is not on the
+# path, which are worth telling apart.
+cmd_fw_status() {
+    [[ -x "$NFT" ]] || { echo "unavailable nftables is not installed"; return 0; }
+    local dump
+    if ! dump=$("$NFT" -a list table inet "$NFT_TABLE" 2>/dev/null); then
+        echo "disarmed"
+        return 0
+    fi
+    local counts
+    counts=$(printf '%s\n' "$dump" | grep -o 'counter packets [0-9]*' | grep -o '[0-9]*$' | tr '\n' ' ')
+    echo "armed ${counts:-0}"
+}
+
 case "${1:-}" in
     start)      shift; cmd_start "${1:-}" ;;
     stop)       cmd_stop ;;
     status)     cmd_status ;;
     dns-apply)  cmd_dns_apply ;;
-    *)          die "Usage: vpn-connect-helper {start <profile>|stop|status|dns-apply}" ;;
+    fw-on)      cmd_fw_on ;;
+    fw-off)     cmd_fw_off ;;
+    fw-status)  cmd_fw_status ;;
+    *)          die "Usage: vpn-connect-helper {start <profile>|stop|status|dns-apply|fw-on|fw-off|fw-status}" ;;
 esac

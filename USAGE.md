@@ -216,6 +216,40 @@ rather than a bug: cutting it at the boundary would report a nine-hour tunnel as
 
 ---
 
+## Inbound protection
+
+![The inbound protection panel: a "blocking" badge, a green banner confirming incoming traffic on the VPN interface is blocked, a drop counter, and the switch](docs/screenshots/firewall.png)
+
+**Inbound protection** is the switch that stops the network at the far end of the VPN from reaching
+anything on this machine. It is worth understanding what it does and does not cover.
+
+What it blocks: anything on the remote network *starting* a connection to this machine — SSH, a web
+server, a container's published port, the DNS resolver, this panel. What it does not touch: anything
+this machine starts. Those replies arrive as part of a connection you opened, so browsing, DNS
+lookups and the tunnel itself all carry on exactly as before.
+
+The count beside the panel title is visible with the panel still collapsed, and it says which of
+four things is true:
+
+| Badge | Means |
+| --- | --- |
+| `blocking` | Switched on, and the filter is in force. |
+| `off` | Switched off. Incoming traffic on the tunnel is allowed. |
+| `not in force` | **Switched on, and not actually filtering.** The panel explains, and connecting is refused. |
+| `unavailable` | This machine has no nftables, so the switch cannot do anything. |
+
+The panel reports a **drop counter**, which is the evidence that the rule is doing something. A
+count of zero while a tunnel is up is reported as "nothing has tried yet" rather than as success —
+zero means either nothing tried or the rule is not on the path, and those are worth telling apart.
+
+Two behaviours that are deliberate:
+
+- **It stays armed while the tunnel is down**, when it matches nothing. That is what removes the
+  window where a tunnel is up and not yet filtered.
+- **If it is switched on but not in force, connecting is refused.** The app tries to put the filter
+  back first — a reboot clears it — and only refuses if it cannot. To connect anyway, switch the
+  protection off, which is a decision rather than an accident.
+
 ## Notifications
 
 ![The notifications panel: an ntfy topic and three editable message bodies](docs/screenshots/notifications.png)

@@ -26,6 +26,7 @@ OPENVPN="${OPENVPN:-$(command -v openvpn || echo /usr/sbin/openvpn)}"
 DNS_CONF="${DNS_CONF:-/etc/dnsmasq.d/vpn-connect.conf}"
 DNS_DIR="$(dirname "$DNS_CONF")"
 DNSMASQ_UNIT="${DNSMASQ_UNIT:-dnsmasq}"
+NFT="${NFT:-$(command -v nft || echo /usr/sbin/nft)}"
 
 # The helper and the app must agree on which legacy file is being retired: the app reads
 # VPN_CONNECT_DNS_LEGACY_CONF from the env file, the helper has it baked in at install time. The
@@ -203,6 +204,7 @@ render() {
         -e "s|@DNS_DIR@|$DNS_DIR|g" \
         -e "s|@LEGACY_DNS_CONF@|$LEGACY_DNS_CONF|g" \
         -e "s|@DNSMASQ_UNIT@|$DNSMASQ_UNIT|g" \
+        -e "s|@NFT@|$NFT|g" \
         -e "s|@APP_DIR@|$APP_DIR|g" \
         -e "s|@ENV_FILE@|$ENV_FILE|g" \
         -e "s|@UV@|$UV|g" \

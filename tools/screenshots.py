@@ -43,6 +43,8 @@ from app.db import open_migrated  # noqa: E402
 from app.services import store, vault  # noqa: E402
 from app.services.connections import Connections  # noqa: E402
 from app.services.dns_rules import DnsRules  # noqa: E402
+from app.services.firewall import SETTING as FIREWALL_SETTING  # noqa: E402
+from app.services.firewall import Firewall  # noqa: E402
 from app.services.history import History  # noqa: E402
 from app.services.openvpn import VpnStatus  # noqa: E402
 from app.services.routing import Route  # noqa: E402
@@ -293,6 +295,9 @@ def seed(tmp: Path) -> tuple:
     _seed_history(db, history)
 
     store.save_notify(db, topic="acme-vpn-a7f3c1")
+    # Switched on, so the panel photographs a coherent state: the switch and the badge agreeing
+    # that the tunnel's inbound traffic is being blocked.
+    store.set_setting(db, FIREWALL_SETTING, "1")
 
     rules = DnsRules(db, config, runner=StubResolvectl())
     rules.add(kind="domain", domain="acme.example", address="10.20.0.53")
@@ -435,6 +440,24 @@ def _attempt_log(connection: str, *, failed: bool) -> list[str]:
     ]
 
 
+class StubHelperRunner:
+    """Answers the firewall helper without a helper, so nothing here can reach sudo.
+
+    Left unpinned, ``create_app`` would build a Firewall around the real ``subprocess.run`` and
+    this script -- whose entire promise is that it touches no real system -- would start shelling
+    out to sudo on whatever machine is taking the pictures. The drop count is invented like every
+    other number in these screenshots.
+    """
+
+    def __call__(self, argv, **_kwargs):
+        class Result:
+            returncode = 0
+            stdout = "armed 1284 96"
+            stderr = ""
+
+        return Result()
+
+
 def build(config, db, connections, history, rules, source_root: Path):
     return create_app(
         {
@@ -445,6 +468,7 @@ def build(config, db, connections, history, rules, source_root: Path):
             "CONNECTIONS": connections,
             "HISTORY": history,
             "DNS_RULES": rules,
+            "FIREWALL": Firewall(db, config, runner=StubHelperRunner()),
             "SOURCE_ROOT": source_root,
             "STARTED_AT": time.time() + 3600,
             "TESTING": True,
@@ -495,6 +519,7 @@ def build_unconfigured(tmp: Path):
             "CONNECTIONS": Connections(db, state, vpn_dir),
             "HISTORY": History(db),
             "DNS_RULES": DnsRules(db, config, runner=StubResolvectl()),
+            "FIREWALL": Firewall(db, config, runner=StubHelperRunner()),
             "SOURCE_ROOT": vpn_dir,
             "STARTED_AT": time.time() + 3600,
             "TESTING": True,
@@ -523,6 +548,7 @@ PANELS = [
     ("scope", "#panel-scope", "#scope-verdict"),
     ("routes", "#panel-routes", "#routes-body tr td"),
     ("dns", "#panel-dns", "#dns-domain-body tr td"),
+    ("firewall", "#panel-firewall", "#fw-toggle"),
     ("notifications", "#panel-notifications", "#ntfy-topic"),
 ]
 

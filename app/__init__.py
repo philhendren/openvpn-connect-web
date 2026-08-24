@@ -18,6 +18,7 @@ from app.db import open_migrated
 from app.services import access, clients, vault
 from app.services.connections import Connections
 from app.services.dns_rules import DnsRules
+from app.services.firewall import Firewall
 from app.services.history import History
 from app.services.notifications import Notifier
 from app.services.openvpn import OpenVpnController
@@ -92,6 +93,7 @@ def create_app(overrides: Mapping[str, Any] | None = None) -> Flask:
     app.config.setdefault("CLIENTS", clients.discover())
     app.logger.info("OpenVPN client: %s", app.config["CLIENTS"].summary)
     app.config.setdefault("DNS_RULES", DnsRules(app.config["DB"], config))
+    app.config.setdefault("FIREWALL", Firewall(app.config["DB"], config))
 
     # One notifier, shared: the controller fires it on tunnel transitions and /api/notify/test
     # sends through the same object, so a working test really does prove the live path.
@@ -104,6 +106,7 @@ def create_app(overrides: Mapping[str, Any] | None = None) -> Flask:
             connections=app.config["CONNECTIONS"],
             history=app.config["HISTORY"],
             notifier=app.config["NOTIFIER"],
+            firewall=app.config["FIREWALL"],
         )
         if not app.testing:
             app.config["CONTROLLER"].attach()
