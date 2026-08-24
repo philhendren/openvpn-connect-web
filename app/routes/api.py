@@ -8,6 +8,7 @@ from app.auth import login_required, validate_csrf
 from app.db import MIGRATIONS_DIR, schema_version
 from app.services import deploy, sessions, store
 from app.services.dns import DnsError
+from app.services.firewall import FirewallUnavailable
 from app.services.notifications import NotifyDeliveryError
 from app.services.notify import (
     DEFAULT_BODIES,
@@ -481,3 +482,43 @@ def disconnect():
     except VpnError as exc:
         return jsonify(error=str(exc)), 400
     return jsonify(_controller().snapshot().to_dict()), 202
+
+
+def _firewall():
+    return current_app.config["FIREWALL"]
+
+
+@bp.get("/firewall")
+@login_required
+def firewall_state():
+    """What is *actually* filtering the tunnel, not what the switch was last set to.
+
+    Off the polled status deliberately: this shells out through sudo, and the answer changes only
+    when somebody touches the switch. Same separation as /api/dns and /api/dns/status.
+    """
+    return jsonify(_firewall().reconcile().to_dict())
+
+
+@bp.post("/firewall")
+@login_required
+def set_firewall():
+    """Arm or disarm inbound protection on the tunnel interface.
+
+    Returns the state read back from the helper rather than the value that was posted, so the UI
+    can never render the switch position as though it were evidence that anything is filtering.
+    """
+    validate_csrf()
+    data = request.get_json(silent=True) or request.form
+    raw = str(data.get("enabled", "")).strip().lower()
+    if raw not in ("1", "0", "true", "false", "on", "off"):
+        return jsonify(error="Send enabled as true or false."), 400
+    # Always 200, even when the switch was set and the filter did not come up. The failure is
+    # reported in the body as `unprotected`, because the body is what the UI has to read anyway --
+    # and a non-2xx here would make a caller treat the request as failed and leave the switch
+    # showing the old position, which is precisely the lie this endpoint exists to avoid.
+    try:
+        state = _firewall().set_intent(raw in ("1", "true", "on"))
+    except FirewallUnavailable as exc:
+        # Asked to arm on a box that cannot. Nothing was stored, so this is a plain refusal.
+        return jsonify(error=str(exc)), 400
+    return jsonify(state.to_dict())

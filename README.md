@@ -119,7 +119,7 @@ in how far that gets you on a real problem with real consequences — something 
 service, holds credentials, and calls `sudo`. I am not going to pretend otherwise, and you should
 factor it into your judgement about running it.
 
-**What I would say in its defence:** the tests are real (752, and they never touch the real system —
+**What I would say in its defence:** the tests are real (789, and they never touch the real system —
 `subprocess.run` and the management client are injected throughout, and a further suite drives the
 page in a real browser), the privilege boundary is narrow and deliberate (one root helper, a fixed
 set of verbs, no caller-supplied paths or content crossing into root), and several of the bugs
@@ -471,6 +471,110 @@ journalctl -u vpn-connect -f | grep 'failed login'
 There is otherwise no TLS, so leave `VPN_CONNECT_COOKIE_SECURE` off unless you put a reverse proxy
 in front. Never port-forward this from your router: use the SSH tunnel, a tailnet, or a reverse
 proxy you control.
+
+## Blocking incoming traffic on the tunnel
+
+The allowlist above guards **this panel**. It does not guard anything else on the machine — and
+while the tunnel is up, `0.0.0.0` includes the tunnel, so every other service you happen to be
+running is offered to the network at the far end of the VPN. On the box this was written for that
+meant sshd, nginx, a container and a DNS resolver, none of which had any business being reachable
+from a corporate network.
+
+**Inbound protection** is one switch for that. When it is on, anything on the remote network trying
+to *start* a connection to this machine is dropped. Traffic you start still works normally, because
+the replies are part of a connection this machine opened.
+
+```
+Inbound protection            [blocking]
+  Incoming traffic on the VPN interface is blocked.
+  1,284 incoming packets dropped so far.
+
+  [x] Block all incoming traffic on the VPN interface
+```
+
+### It is armed, not applied
+
+The obvious way to build this would be to install the rules when the tunnel comes up and remove
+them when it goes down. This does not do that, and the reason is the gap that design leaves: for as
+long as it takes to install a rule, the tunnel is up and unfiltered. That gap is the whole thing
+being defended against.
+
+Instead the rules name the interface and are simply left in place. They match nothing while no
+tunnel exists, and start matching the instant one appears — so there is no window, nothing to
+sequence, and no state to lose when the app restarts. The switch means *armed*, not *apply now*.
+
+This is why it is one setting for the machine rather than a per-connection checkbox: it is a
+property of an interface, not of a profile, and making it per-connection would force the
+apply-on-connect design back again.
+
+### The switch is not the evidence
+
+A switch showing "on" while nothing is actually filtering is the worst thing this feature could do,
+so the panel never renders the switch position as though it proved something. Every reading comes
+back from the machine: whether the ruleset is loaded, and how many packets it has dropped.
+
+If protection is switched on and is **not** in force, the panel says so in red and **the app
+refuses to connect** — bringing the tunnel up would expose the machine, which is the one moment
+this is supposed to prevent. It tries to repair the filter first, since the usual cause is a reboot,
+and the way out is to switch the protection off, deliberately.
+
+A drop counter of zero on a live tunnel is reported as "nothing has tried yet" rather than as
+success, because zero has two possible causes and only one of them is good.
+
+### What clears it, and what does not
+
+The rules are **kernel state, not process state**. Once `nft` has loaded them nothing owns them —
+the helper that installed them exits immediately, and the ruleset carries on without it. That has
+one pleasant consequence and one that needs handling:
+
+| Event | Protection survives? |
+| --- | --- |
+| `systemctl restart vpn-connect` | **Yes** |
+| The app crashing and being restarted | **Yes** |
+| Upgrading and restarting the service | **Yes** |
+| Switching the toggle off | No — that is the point |
+| `nft delete table inet vpnconnect` by hand | No |
+| **Rebooting the machine** | **No** |
+
+Only a reboot loses it, because a reboot empties the kernel's netfilter tables. Restarting the
+service does not, and neither does the app dying: the filter is not tied to the lifetime of the
+process that asked for it.
+
+**After a reboot the app puts it back before it is needed.** Opening the panel re-arms it, and so
+does connecting — the check runs *before* the tunnel is started, not after, so a connection made
+through this app is never the thing that races the filter into place.
+
+The gap that leaves is narrow and worth naming: a tunnel started **outside** this app, after a
+reboot, before anyone has opened the page. That is the `unmanaged` adoption case. Closing it means
+writing the ruleset to `/etc/nftables.d/` and letting `nftables.service` load it at boot, which is
+a helper writing under `/etc` and therefore needs its path in `ReadWritePaths` — see the note on
+`ProtectSystem` above. It is not done.
+
+Two things not to do to this machine:
+
+- **Nothing here should ever run `nft flush ruleset`.** It would delete Docker's and Tailscale's
+  rules along with these, and Docker will not rebuild its own without a restart. Switching the
+  protection off deletes one table *by name*, which is why.
+- **If you ever enable `ufw`, check this table afterwards.** ufw manages its own chains and is
+  disabled on the machine this was written for, so what its initialisation does to a separate
+  `inet` table has not been established here. Assume nothing and look.
+
+### What it needs, and what it cannot do
+
+nftables, which is what recent Ubuntu already uses underneath `iptables`. The rules live in their
+own named table, so Docker's and Tailscale's rules are untouched, and turning the switch off
+deletes that table by name — never the whole ruleset, which would take theirs with it.
+
+It is **not a general firewall**. It does one thing to one kind of interface, and there is
+deliberately no way to add a rule from the web page: the ruleset is a literal inside the root-owned
+helper, and the app can only ask for one of two predefined states. Editing the policy means editing
+`deploy/vpn-connect-helper.in` and re-installing, which is a decision for someone with root and a
+shell — not a form field.
+
+The rules cover both IPv4 and IPv6, and they include forwarded traffic as well as traffic addressed
+to the host. That second part matters more than it sounds: a published container port is forwarded
+rather than delivered locally, so a filter that only covered the host would leave containers
+reachable while reporting success.
 
 ## Configuration
 
