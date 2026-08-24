@@ -161,11 +161,21 @@ jobs:
   # the repository, and it is fenced in three ways: it runs on pushes to main and nowhere else,
   # it is the only job granted contents: write, and it touches exactly one path. A pull request
   # -- including one from a fork -- never reaches it.
+  # Badge data goes to the unprotected `badges` branch, never to main. main requires a pull
+  # request and passing checks, so a job pushing to it is refused outright with GH006 -- which is
+  # exactly what happened the first time the coverage number actually moved, having been hidden
+  # until then by the "nothing to commit" short-circuit.
+  #
+  # continue-on-error, because of what that failure did: this job lives in the tests workflow, so
+  # it failing turned the *tests* badge red while every test had passed. A badge that reports a
+  # test failure that did not happen is worse than a badge that is briefly stale, and this whole
+  # feature exists to say what is true. The job still reports its own failure on the run.
   badge:
     name: coverage badge
     needs: test
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    continue-on-error: true
 
     permissions:
       contents: write
@@ -173,33 +183,47 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # v8 targets node24; v6 is still node20 -- see the note beside the actions in the test job.
+      # v8 targets node24; v6 is still node20 -- see the version table in the project notes.
       - uses: actions/download-artifact@v8
         with:
           name: coverage
           path: artifact
 
-      - name: Commit the badge data if it changed
+      - name: Publish the badge data
         run: |
-          mv artifact/coverage.json .github/coverage.json
-          if git diff --quiet -- .github/coverage.json; then
-            echo "Coverage is unchanged; nothing to commit."
-            exit 0
-          fi
+          set -euo pipefail
+          NAME="coverage.json"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/coverage.json
-          # [skip ci] because this commit is a consequence of a run, not a reason for another one.
-          git commit -m "Update coverage badge data [skip ci]"
-          # ui.yml's badge job pushes to main on the same event, so these two race. Whoever
-          # arrives second is rejected as non-fast-forward; rebasing and retrying is enough
-          # because they touch different files and neither cares about the other's content.
+
           for attempt in 1 2 3; do
-            if git push; then
-              exit 0
-            fi
-            echo "Push rejected (attempt ${attempt}); rebasing onto main and retrying."
-            git pull --rebase origin main
+              # Re-read the branch at the top of every attempt, so a retry rebuilds on whatever
+              # is there now rather than replaying a stale tip. It is also what makes the two
+              # workflows' badge jobs safe to run at once: they write different files, and
+              # whichever arrives second simply builds on the first.
+              if git fetch --quiet origin badges 2>/dev/null; then
+                  git checkout --quiet -B badges FETCH_HEAD
+              else
+                  # First run only. An orphan branch holding badge data and nothing else -- it
+                  # exists to be fetched by an image proxy, not read by a person, so it carries
+                  # none of main's history or files.
+                  git checkout --quiet --orphan badges
+                  git rm -rqf --cached . 2>/dev/null || true
+                  find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+              fi
+
+              cp "artifact/$NAME" "$NAME"
+              git add "$NAME"
+              if git diff --cached --quiet; then
+                  echo "$NAME is unchanged; nothing to publish."
+                  exit 0
+              fi
+              git commit --quiet -m "Update $NAME [skip ci]"
+              if git push --quiet origin badges; then
+                  echo "Published $NAME."
+                  exit 0
+              fi
+              echo "Push rejected (attempt $attempt); rebuilding on the current tip."
           done
-          echo "Could not push the badge data after three attempts." >&2
+          echo "Could not publish $NAME after three attempts." >&2
           exit 1

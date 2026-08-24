@@ -1,9 +1,9 @@
 # OpenVPN Connect Web
 
 [![tests](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml/badge.svg?branch=main&event=push)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
-[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fmain%2F.github%2Fcoverage.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
+[![coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fbadges%2Fcoverage.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/tests.yml)
 [![journeys](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml/badge.svg?branch=main&event=push)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml)
-[![journey coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fmain%2F.github%2Fjourneys.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml)
+[![journey coverage](https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fphilhendren%2Fopenvpn-connect-web%2Fbadges%2Fjourneys.json)](https://github.com/philhendren/openvpn-connect-web/actions/workflows/ui.yml)
 
 > [!IMPORTANT]
 > **Not the OpenVPN Connect app.** This is `openvpn-connect-web`: an unofficial, self-hosted web
@@ -966,10 +966,15 @@ than in the workflow, so CI fails on the same number you do locally — a floor 
 that guts the tests, not a target to chase.
 
 The four badges at the top of this file are those runs, made visible: the two suites, and what each
-one covers. The coverage figures read `.github/coverage.json` and `.github/journeys.json`, which a
-`main`-only job in each workflow rewrites after a successful run — no external account and no
-access token, so the numbers never leave GitHub. Those two jobs are the only ones granted
-`contents: write`, each touches exactly one path, and a pull request never reaches either.
+one covers. The coverage figures read `coverage.json` and `journeys.json` from the **`badges`
+branch**, which a `main`-only job in each workflow rewrites after a successful run — no external
+account and no access token, so the numbers never leave GitHub. Those two jobs are the only ones
+granted `contents: write`, each writes exactly one file, and a pull request never reaches either.
+
+They write to a separate branch because **`main` requires a pull request**, so a job pushing to it
+is refused outright. The `badges` branch is an orphan holding those two files and nothing else, and
+neither job is allowed to fail the workflow it sits in: one of them failing to publish a number
+must never be reported as the test suite failing.
 
 **The journey figure is far lower than the other one, and that is the design rather than a gap.**
 It is the share of `app/` that seven browser scenarios happen to execute, and those scenarios exist
