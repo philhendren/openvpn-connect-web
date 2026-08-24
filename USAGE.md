@@ -226,7 +226,7 @@ anything on this machine. It is worth understanding what it does and does not co
 What it blocks: anything on the remote network *starting* a connection to this machine — SSH, a web
 server, a container's published port, the DNS resolver, this panel. What it does not touch: anything
 this machine starts. Those replies arrive as part of a connection you opened, so browsing, DNS
-lookups and the tunnel itself all carry on exactly as before.
+lookups and the tunnel itself all carry on exactly as before. This stops the VPN Administrator having a TCP connection inbound on the machine.
 
 The count beside the panel title is visible with the panel still collapsed, and it says which of
 four things is true:
