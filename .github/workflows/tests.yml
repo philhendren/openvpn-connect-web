@@ -207,13 +207,13 @@ jobs:
               if git fetch --quiet origin badges 2>/dev/null; then
                   git checkout --quiet -B badges FETCH_HEAD
               else
-                  # First run, or after somebody deletes the branch. An orphan branch holding
-                  # badge data and nothing else -- it
-                  # exists to be fetched by an image proxy, not read by a person, so it carries
-                  # none of main's history or files.
-                  git checkout --quiet --orphan badges
-                  git rm -rqf --cached . 2>/dev/null || true
-                  find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+                  # First run, or after somebody deletes the branch. Branched from main rather
+                  # than orphaned: GitHub offers "Compare & pull request" for any recently
+                  # pushed branch, there is no setting to turn that off, and the one workaround
+                  # -- open a pull request and close it -- cannot be applied to a branch with no
+                  # common ancestor, because GitHub refuses to compare unrelated histories.
+                  # So the branch has to stay comparable for the prompt to be dismissable.
+                  git checkout --quiet -B badges HEAD
               fi
 
               cp "$RUNNER_TEMP/badge/$NAME" "$NAME"
