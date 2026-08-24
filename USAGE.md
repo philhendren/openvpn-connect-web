@@ -247,8 +247,25 @@ Two behaviours that are deliberate:
 - **It stays armed while the tunnel is down**, when it matches nothing. That is what removes the
   window where a tunnel is up and not yet filtered.
 - **If it is switched on but not in force, connecting is refused.** The app tries to put the filter
-  back first — a reboot clears it — and only refuses if it cannot. To connect anyway, switch the
-  protection off, which is a decision rather than an accident.
+  back first and only refuses if it cannot. To connect anyway, switch the protection off, which is
+  a decision rather than an accident.
+
+### Restarting the service does not turn it off
+
+The filter lives in the kernel, not in this app, so it is unaffected by the app stopping, crashing
+or being upgraded. **Only rebooting the machine clears it** — that empties the kernel's tables:
+
+| Event | Protection survives? |
+| --- | --- |
+| `systemctl restart vpn-connect` | **Yes** |
+| The app crashing and being restarted | **Yes** |
+| Switching the toggle off | No — that is the point |
+| **Rebooting the machine** | **No** |
+
+You do not normally have to do anything about the last one. Opening this page re-arms it, and so
+does connecting — the check runs *before* the tunnel starts. The one case to know about is a tunnel
+started **outside** this app after a reboot, before anyone has opened the page; see
+[the README](README.md#what-clears-it-and-what-does-not) for why that is still open.
 
 ## Notifications
 

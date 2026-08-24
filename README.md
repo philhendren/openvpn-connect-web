@@ -521,6 +521,44 @@ and the way out is to switch the protection off, deliberately.
 A drop counter of zero on a live tunnel is reported as "nothing has tried yet" rather than as
 success, because zero has two possible causes and only one of them is good.
 
+### What clears it, and what does not
+
+The rules are **kernel state, not process state**. Once `nft` has loaded them nothing owns them —
+the helper that installed them exits immediately, and the ruleset carries on without it. That has
+one pleasant consequence and one that needs handling:
+
+| Event | Protection survives? |
+| --- | --- |
+| `systemctl restart vpn-connect` | **Yes** |
+| The app crashing and being restarted | **Yes** |
+| Upgrading and restarting the service | **Yes** |
+| Switching the toggle off | No — that is the point |
+| `nft delete table inet vpnconnect` by hand | No |
+| **Rebooting the machine** | **No** |
+
+Only a reboot loses it, because a reboot empties the kernel's netfilter tables. Restarting the
+service does not, and neither does the app dying: the filter is not tied to the lifetime of the
+process that asked for it.
+
+**After a reboot the app puts it back before it is needed.** Opening the panel re-arms it, and so
+does connecting — the check runs *before* the tunnel is started, not after, so a connection made
+through this app is never the thing that races the filter into place.
+
+The gap that leaves is narrow and worth naming: a tunnel started **outside** this app, after a
+reboot, before anyone has opened the page. That is the `unmanaged` adoption case. Closing it means
+writing the ruleset to `/etc/nftables.d/` and letting `nftables.service` load it at boot, which is
+a helper writing under `/etc` and therefore needs its path in `ReadWritePaths` — see the note on
+`ProtectSystem` above. It is not done.
+
+Two things not to do to this machine:
+
+- **Nothing here should ever run `nft flush ruleset`.** It would delete Docker's and Tailscale's
+  rules along with these, and Docker will not rebuild its own without a restart. Switching the
+  protection off deletes one table *by name*, which is why.
+- **If you ever enable `ufw`, check this table afterwards.** ufw manages its own chains and is
+  disabled on the machine this was written for, so what its initialisation does to a separate
+  `inet` table has not been established here. Assume nothing and look.
+
 ### What it needs, and what it cannot do
 
 nftables, which is what recent Ubuntu already uses underneath `iptables`. The rules live in their
